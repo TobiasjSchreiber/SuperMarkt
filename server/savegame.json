@@ -1,0 +1,176 @@
+{
+  "budget": 1740,
+  "storeName": "Super-Saver",
+  "storeLevel": 4,
+  "storeExp": 3306,
+  "inventory": {
+    "bread": 58,
+    "cereal": 36,
+    "pasta": 63,
+    "apple": 93,
+    "banana": 107,
+    "tomato": 100,
+    "pizza": 75,
+    "icecream": 83,
+    "frozen_veggies": 61
+  },
+  "placedItems": [
+    {
+      "id": "item_1779657073408_5xzw",
+      "type": "pc_terminal",
+      "productId": "",
+      "gridX": -6,
+      "gridZ": -2,
+      "rotation": 0,
+      "stock": 0,
+      "maxStock": 0
+    },
+    {
+      "id": "item_1779657681310_0dwd",
+      "type": "shelf_groceries",
+      "productId": "pasta",
+      "gridX": 3,
+      "gridZ": 3,
+      "rotation": 0,
+      "stock": 0,
+      "maxStock": 12
+    },
+    {
+      "id": "item_1779657682051_8olx",
+      "type": "shelf_groceries",
+      "productId": "cereal",
+      "gridX": 2,
+      "gridZ": 3,
+      "rotation": 0,
+      "stock": 0,
+      "maxStock": 12
+    },
+    {
+      "id": "item_1779657682733_4w3i",
+      "type": "shelf_groceries",
+      "productId": "bread",
+      "gridX": 1,
+      "gridZ": 3,
+      "rotation": 0,
+      "stock": 0,
+      "maxStock": 12
+    },
+    {
+      "id": "item_1779657684928_dcnj",
+      "type": "shelf_produce",
+      "productId": "tomato",
+      "gridX": -1,
+      "gridZ": 3,
+      "rotation": 0,
+      "stock": 0,
+      "maxStock": 10
+    },
+    {
+      "id": "item_1779657685464_gmzw",
+      "type": "shelf_produce",
+      "productId": "banana",
+      "gridX": -2,
+      "gridZ": 3,
+      "rotation": 0,
+      "stock": 2,
+      "maxStock": 10
+    },
+    {
+      "id": "item_1779657896627_dhsq",
+      "type": "cash_register",
+      "productId": "",
+      "gridX": -3,
+      "gridZ": 6,
+      "rotation": 1,
+      "stock": 0,
+      "maxStock": 0
+    },
+    {
+      "id": "item_1779658127044_h9nm",
+      "type": "shelf_frozen",
+      "productId": "pizza",
+      "gridX": -5,
+      "gridZ": 3,
+      "rotation": 0,
+      "stock": 4,
+      "maxStock": 8
+    },
+    {
+      "id": "item_1779658128688_zcgn",
+      "type": "shelf_frozen",
+      "productId": "icecream",
+      "gridX": -6,
+      "gridZ": 3,
+      "rotation": 0,
+      "stock": 8,
+      "maxStock": 8
+    },
+    {
+      "id": "item_1779658381580_v2gm",
+      "type": "shelf_produce",
+      "productId": "apple",
+      "gridX": -3,
+      "gridZ": 3,
+      "rotation": 0,
+      "stock": 8,
+      "maxStock": 10
+    },
+    {
+      "id": "item_1779659458475_zg74",
+      "type": "shelf_frozen",
+      "productId": "frozen_veggies",
+      "gridX": -4,
+      "gridZ": 3,
+      "rotation": 1,
+      "stock": 8,
+      "maxStock": 8
+    },
+    {
+      "id": "item_1779659809111_y15y",
+      "type": "shelf_groceries",
+      "productId": "bread",
+      "gridX": 4,
+      "gridZ": 3,
+      "rotation": 0,
+      "stock": 10,
+      "maxStock": 12
+    },
+    {
+      "id": "item_1779659809652_30ko",
+      "type": "shelf_groceries",
+      "productId": "cereal",
+      "gridX": 5,
+      "gridZ": 3,
+      "rotation": 0,
+      "stock": 11,
+      "maxStock": 12
+    },
+    {
+      "id": "item_1779659810132_yzio",
+      "type": "shelf_groceries",
+      "productId": "pasta",
+      "gridX": 6,
+      "gridZ": 3,
+      "rotation": 0,
+      "stock": 12,
+      "maxStock": 12
+    }
+  ],
+  "employees": [
+    {
+      "id": "emp_1779659586808",
+      "name": "Lukas",
+      "color": "#10b981",
+      "salary": 50,
+      "task": "stocking"
+    },
+    {
+      "id": "emp_1779660321635",
+      "name": "Tom",
+      "color": "#10b981",
+      "salary": 50,
+      "task": "register"
+    }
+  ],
+  "deliveryBoxes": []
+}
