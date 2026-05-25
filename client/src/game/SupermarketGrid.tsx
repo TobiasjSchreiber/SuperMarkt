@@ -3,6 +3,7 @@ import { useThree, useFrame } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
 import * as THREE from "three";
 import { networkManager } from "./NetworkManager";
+import { soundManager } from "./SoundManager";
 
 // --- Sub-components for Mesh Graphics ---
 
@@ -16,7 +17,121 @@ const products = [
   { id: "pizza", name: "Tiefkühlpizza", category: "shelf_frozen", price: 5, sellPrice: 12, icon: "🍕", color: "#fb923c" },
   { id: "icecream", name: "Eiscreme", category: "shelf_frozen", price: 6, sellPrice: 15, icon: "🍦", color: "#60a5fa" },
   { id: "frozen_veggies", name: "TK-Gemüse", category: "shelf_frozen", price: 4, sellPrice: 9, icon: "🥦", color: "#4ade80" },
+  { id: "ak47", name: "AK-47", category: "weapon", price: 800, sellPrice: 0, icon: "🔫", color: "#475569" },
 ];
+
+const sideTextureCache: Record<string, THREE.CanvasTexture> = {};
+const topTextureCache: Record<string, THREE.CanvasTexture> = {};
+
+export const getSideLabelTexture = (product: any, amount: number, boxId: string) => {
+  const key = `${product?.id}_${amount}_${boxId}`;
+  if (sideTextureCache[key]) return sideTextureCache[key];
+
+  const canvas = document.createElement("canvas");
+  canvas.width = 256; canvas.height = 184;
+  const ctx = canvas.getContext("2d");
+  if (ctx) {
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, 256, 184);
+    ctx.strokeStyle = "#cbd5e1";
+    ctx.lineWidth = 4;
+    ctx.strokeRect(2, 2, 252, 180);
+    
+    ctx.font = "32px sans-serif";
+    ctx.textBaseline = "top";
+    ctx.fillStyle = "#000";
+    ctx.fillText(product?.icon || "📦", 16, 16);
+    
+    ctx.font = "bold 24px 'Courier New', monospace";
+    ctx.fillStyle = "#0f172a";
+    ctx.fillText((product?.name || "BOX").toUpperCase().substring(0, 10), 60, 20);
+
+    ctx.beginPath();
+    ctx.setLineDash([8, 8]);
+    ctx.moveTo(16, 60); ctx.lineTo(240, 60);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.font = "bold 18px 'Courier New', monospace";
+    ctx.fillText(`QTY: ${amount}`, 16, 80);
+    ctx.fillStyle = "#64748b";
+    ctx.fillText(`#${boxId.substring(4, 8).toUpperCase()}`, 160, 80);
+
+    ctx.fillStyle = "#000";
+    for (let i = 0; i < 30; i++) {
+      const w = Math.random() > 0.5 ? 2 : 6;
+      ctx.fillRect(16 + i * 7.5, 120, w, 40);
+    }
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  sideTextureCache[key] = tex;
+  return tex;
+};
+
+export const getTopLabelTexture = (product: any) => {
+  const key = `${product?.id}`;
+  if (topTextureCache[key]) return topTextureCache[key];
+
+  const canvas = document.createElement("canvas");
+  canvas.width = 180; canvas.height = 140;
+  const ctx = canvas.getContext("2d");
+  if (ctx) {
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, 180, 140);
+    ctx.strokeStyle = "#cbd5e1";
+    ctx.lineWidth = 4;
+    ctx.strokeRect(2, 2, 176, 136);
+
+    ctx.fillStyle = "#0f172a";
+    ctx.font = "bold 16px 'Courier New', monospace";
+    ctx.fillText("SHIP TO: ROOT", 10, 24);
+
+    ctx.font = "bold 20px 'Courier New', monospace";
+    ctx.fillText(`PROD: ${(product?.id || "BOX").toUpperCase().substring(0,8)}`, 10, 60);
+
+    ctx.fillStyle = "#000";
+    for (let i = 0; i < 20; i++) {
+      const w = Math.random() > 0.5 ? 2 : 5;
+      ctx.fillRect(10 + i * 8, 90, w, 30);
+    }
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  topTextureCache[key] = tex;
+  return tex;
+};
+
+// Delivery Box Mesh
+export const StoreDeliveryBox: React.FC<{ box: any }> = ({ box }) => {
+  if (box.isHeld) return null;
+  const product = products.find(p => p.id === box.productId);
+  const sideTex = getSideLabelTexture(product, box.amount, box.id);
+  const topTex = getTopLabelTexture(product);
+  
+  return (
+    <group position={[box.x, 0.15, box.z]} name={`delivery_box_${box.id}`}>
+      <mesh castShadow receiveShadow>
+        <boxGeometry args={[0.5, 0.3, 0.4]} />
+        <meshStandardMaterial color="#92400e" roughness={0.8} />
+      </mesh>
+      <mesh position={[0, 0.151, 0]}>
+        <boxGeometry args={[0.08, 0.01, 0.41]} />
+        <meshStandardMaterial color="#451a03" />
+      </mesh>
+      
+      <mesh position={[0.251, 0.05, 0]} rotation={[0, Math.PI / 2, 0]}>
+        <planeGeometry args={[0.25, 0.18]} />
+        <meshStandardMaterial map={sideTex} roughness={0.9} />
+      </mesh>
+      
+      <mesh position={[0.13, 0.151, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[0.18, 0.14]} />
+        <meshStandardMaterial map={topTex} roughness={0.9} />
+      </mesh>
+    </group>
+  );
+};
 
 const ProductMesh: React.FC<{ productId: string, color: string }> = ({ productId, color }) => {
   if (productId === "bread") return (
@@ -45,8 +160,8 @@ const ProductMesh: React.FC<{ productId: string, color: string }> = ({ productId
   );
   if (productId === "banana") return (
     <group rotation={[0.5, 0, 0.3]}>
-      <mesh castShadow><cylinderGeometry args={[0.02, 0.02, 0.2, 6]} rotation={[0, 0, Math.PI / 2]} /><meshStandardMaterial color={color} /></mesh>
-      <mesh position={[0, 0.04, 0.02]}><cylinderGeometry args={[0.02, 0.02, 0.18, 6]} rotation={[0, 0, Math.PI / 2]} /><meshStandardMaterial color={color} /></mesh>
+      <mesh castShadow rotation={[0, 0, Math.PI / 2]}><cylinderGeometry args={[0.02, 0.02, 0.2, 6]} /><meshStandardMaterial color={color} /></mesh>
+      <mesh position={[0, 0.04, 0.02]} rotation={[0, 0, Math.PI / 2]}><cylinderGeometry args={[0.02, 0.02, 0.18, 6]} /><meshStandardMaterial color={color} /></mesh>
     </group>
   );
   if (productId === "tomato") return (
@@ -284,35 +399,143 @@ export const ShelfFrozen: React.FC<{ stock?: number; productId?: string }> = ({ 
 };
 
 
-// Cash Register Mesh
+// Cash Register Mesh (Modern checkout counter with conveyor, scanner, terminal, monitor, and printer)
 export const CashRegister: React.FC = () => (
   <group>
-    {/* Checkout desk counter */}
-    <mesh position={[-0.15, 0.45, 0]} castShadow receiveShadow>
-      <boxGeometry args={[0.5, 0.9, 1.0]} />
-      <meshStandardMaterial color="#1e293b" roughness={0.4} />
+    {/* --- Sleek Counter Table --- */}
+    {/* Main Counter Base */}
+    <mesh position={[-0.15, 0.425, 0]} castShadow receiveShadow>
+      <boxGeometry args={[0.5, 0.85, 1.0]} />
+      <meshStandardMaterial color="#1e293b" roughness={0.3} metalness={0.1} />
     </mesh>
-    {/* Conveyor belt */}
-    <mesh position={[0.15, 0.42, 0]} castShadow>
-      <boxGeometry args={[0.1, 0.84, 0.94]} />
-      <meshStandardMaterial color="#0f172a" roughness={0.9} />
+    {/* Dark Obsidian Glass Countertop */}
+    <mesh position={[-0.15, 0.855, 0]} castShadow receiveShadow>
+      <boxGeometry args={[0.52, 0.02, 1.02]} />
+      <meshStandardMaterial color="#0f172a" roughness={0.1} metalness={0.5} />
     </mesh>
-    {/* Small cash machine scanner / screen block */}
-    <group position={[-0.18, 1.05, 0.1]} rotation={[0, -0.4, 0]}>
-      <mesh castShadow>
-        <boxGeometry args={[0.22, 0.25, 0.22]} />
+    
+    {/* LED accent light around bottom of counter */}
+    <mesh position={[-0.15, 0.03, 0]}>
+      <boxGeometry args={[0.51, 0.04, 1.01]} />
+      <meshStandardMaterial color="#14b8a6" emissive="#14b8a6" emissiveIntensity={0.8} />
+    </mesh>
+
+    {/* --- Conveyor Belt System --- */}
+    {/* Conveyor Belt Tray */}
+    <mesh position={[0.15, 0.4, 0.05]} castShadow>
+      <boxGeometry args={[0.2, 0.8, 0.9]} />
+      <meshStandardMaterial color="#334155" metalness={0.7} roughness={0.3} />
+    </mesh>
+    {/* Belt surface */}
+    <mesh position={[0.15, 0.805, 0.05]}>
+      <boxGeometry args={[0.18, 0.01, 0.86]} />
+      <meshStandardMaterial color="#0b0f19" roughness={0.9} />
+    </mesh>
+    {/* Silver rollers at ends */}
+    <mesh position={[0.15, 0.79, 0.48]} rotation={[0, 0, Math.PI / 2]}>
+      <cylinderGeometry args={[0.015, 0.015, 0.18, 8]} />
+      <meshStandardMaterial color="#cbd5e1" metalness={0.9} roughness={0.1} />
+    </mesh>
+    <mesh position={[0.15, 0.79, -0.38]} rotation={[0, 0, Math.PI / 2]}>
+      <cylinderGeometry args={[0.015, 0.015, 0.18, 8]} />
+      <meshStandardMaterial color="#cbd5e1" metalness={0.9} roughness={0.1} />
+    </mesh>
+
+    {/* --- Embedded Bi-optic Laser Barcode Scanner --- */}
+    {/* Scanner main base plate */}
+    <mesh position={[-0.15, 0.866, -0.1]} rotation={[-Math.PI / 2, 0, 0]}>
+      <planeGeometry args={[0.2, 0.2]} />
+      <meshStandardMaterial color="#475569" metalness={0.8} roughness={0.2} />
+    </mesh>
+    {/* Horizontal glass window */}
+    <mesh position={[-0.15, 0.867, -0.1]} rotation={[-Math.PI / 2, 0, 0]}>
+      <planeGeometry args={[0.14, 0.1]} />
+      <meshStandardMaterial color="#ef4444" transparent opacity={0.6} emissive="#ef4444" emissiveIntensity={0.5} />
+    </mesh>
+    {/* Vertical glass window (bi-optic angle) */}
+    <group position={[-0.15, 0.92, -0.2]} rotation={[-0.4, 0, 0]}>
+      <mesh>
+        <boxGeometry args={[0.16, 0.1, 0.02]} />
         <meshStandardMaterial color="#334155" metalness={0.6} />
       </mesh>
-      {/* Scanner Screen glowing */}
-      <mesh position={[0, 0.04, 0.12]} rotation={[0.2, 0, 0]}>
-        <boxGeometry args={[0.16, 0.12, 0.02]} />
-        <meshStandardMaterial color="#000000" emissive="#14b8a6" emissiveIntensity={0.8} />
+      <mesh position={[0, 0, 0.011]}>
+        <planeGeometry args={[0.12, 0.07]} />
+        <meshStandardMaterial color="#ef4444" transparent opacity={0.6} emissive="#ef4444" emissiveIntensity={0.5} />
       </mesh>
     </group>
-    {/* Scanner glass window */}
-    <mesh position={[-0.1, 0.91, -0.2]}>
-      <boxGeometry args={[0.15, 0.01, 0.15]} />
-      <meshStandardMaterial color="#22d3ee" transparent opacity={0.6} emissive="#22d3ee" emissiveIntensity={0.3} />
+
+    {/* --- Cashier Interface (Screen & Register) --- */}
+    {/* Cash Drawer block under table (facing cashier) */}
+    <mesh position={[-0.15, 0.5, 0.1]} castShadow>
+      <boxGeometry args={[0.3, 0.15, 0.4]} />
+      <meshStandardMaterial color="#475569" metalness={0.9} roughness={0.3} />
+    </mesh>
+
+    {/* POS Monitor Stand */}
+    <mesh position={[-0.28, 0.95, 0.1]} castShadow>
+      <boxGeometry args={[0.04, 0.2, 0.04]} />
+      <meshStandardMaterial color="#334155" metalness={0.8} />
+    </mesh>
+    {/* POS Monitor Display (angled toward cashier at -x) */}
+    <group position={[-0.28, 1.1, 0.1]} rotation={[0.2, -Math.PI / 2 - 0.2, 0]}>
+      {/* Outer frame */}
+      <mesh castShadow>
+        <boxGeometry args={[0.26, 0.18, 0.03]} />
+        <meshStandardMaterial color="#0f172a" roughness={0.5} />
+      </mesh>
+      {/* Screen pane */}
+      <mesh position={[0, 0, 0.016]}>
+        <planeGeometry args={[0.24, 0.16]} />
+        <meshStandardMaterial color="#020617" emissive="#14b8a6" emissiveIntensity={0.4} />
+      </mesh>
+    </group>
+
+    {/* --- Customer Payment Terminal (Card Terminal) --- */}
+    {/* Mount stand (tilted toward customer) */}
+    <mesh position={[0.22, 0.92, -0.1]} rotation={[0.2, -0.3, -0.2]} castShadow>
+      <cylinderGeometry args={[0.012, 0.012, 0.12]} />
+      <meshStandardMaterial color="#1e293b" metalness={0.8} />
+    </mesh>
+    {/* Terminal body (facing customer at +x) */}
+    <group position={[0.22, 0.98, -0.08]} rotation={[0.4, Math.PI / 2 - 0.3, 0]}>
+      <mesh castShadow>
+        <boxGeometry args={[0.1, 0.04, 0.15]} />
+        <meshStandardMaterial color="#334155" roughness={0.6} />
+      </mesh>
+      {/* Display Screen */}
+      <mesh position={[0, 0.021, -0.025]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[0.08, 0.05]} />
+        <meshStandardMaterial color="#000" emissive="#8b5cf6" emissiveIntensity={0.6} />
+      </mesh>
+      {/* Keypad block */}
+      <mesh position={[0, 0.021, 0.035]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[0.08, 0.05]} />
+        <meshStandardMaterial color="#1e293b" roughness={0.8} />
+      </mesh>
+    </group>
+
+    {/* --- Receipt Printer --- */}
+    <group position={[-0.28, 0.90, -0.35]}>
+      <mesh castShadow>
+        <boxGeometry args={[0.14, 0.08, 0.15]} />
+        <meshStandardMaterial color="#334155" metalness={0.6} roughness={0.4} />
+      </mesh>
+      {/* Paper exit slot */}
+      <mesh position={[0, 0.041, 0.02]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[0.09, 0.01]} />
+        <meshStandardMaterial color="#1e293b" />
+      </mesh>
+      {/* Little piece of paper stickout */}
+      <mesh position={[0, 0.046, 0.03]} rotation={[-Math.PI / 2 + 0.2, 0, 0]}>
+        <planeGeometry args={[0.08, 0.02]} />
+        <meshStandardMaterial color="#ffffff" roughness={1.0} />
+      </mesh>
+    </group>
+
+    {/* --- Checkout Goods Divider bar (visual flavor) --- */}
+    <mesh position={[0.15, 0.82, 0.35]} rotation={[0, 0, Math.PI / 2]}>
+      <cylinderGeometry args={[0.01, 0.01, 0.18]} />
+      <meshStandardMaterial color="#ef4444" roughness={0.4} />
     </mesh>
   </group>
 );
@@ -355,33 +578,79 @@ export const PCTerminal: React.FC = () => (
   </group>
 );
 
-// Delivery Box Mesh
-export const DeliveryBoxMesh: React.FC<{ box: any }> = ({ box }) => {
-  const product = products.find(p => p.id === box.productId);
-  
+// Storage Shelf Component
+export const StorageShelf: React.FC<{ storedBoxIds?: string[]; deliveryBoxes: Map<string, any> }> = ({ storedBoxIds = [], deliveryBoxes }) => {
   return (
-    <group position={[box.x, 0.15, box.z]} name={`delivery_box_${box.id}`}>
-      {/* Box Body */}
-      <mesh castShadow receiveShadow>
-        <boxGeometry args={[0.5, 0.3, 0.4]} />
-        <meshStandardMaterial color="#92400e" roughness={0.8} />
-      </mesh>
-      {/* Tape */}
-      <mesh position={[0, 0.151, 0]}>
-        <boxGeometry args={[0.08, 0.01, 0.41]} />
-        <meshStandardMaterial color="#451a03" />
-      </mesh>
-      {/* Label */}
-      <mesh position={[0.251, 0.05, 0]} rotation={[0, Math.PI / 2, 0]}>
-        <planeGeometry args={[0.2, 0.15]} />
-        <meshStandardMaterial color="#ffffff" />
-      </mesh>
-      {/* Floating Product Icon */}
-      <Html position={[0, 0.4, 0]} center distanceFactor={4}>
-        <div style={{ fontSize: "1.2rem", filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.5))" }}>
-          {product?.icon}
-        </div>
-      </Html>
+    <group>
+      {/* Frame Structure (Industrial Look) */}
+      <mesh position={[-0.45, 1, -0.45]}><boxGeometry args={[0.05, 2, 0.05]} /><meshStandardMaterial color="#475569" metalness={0.8} /></mesh>
+      <mesh position={[0.45, 1, -0.45]}><boxGeometry args={[0.05, 2, 0.05]} /><meshStandardMaterial color="#475569" metalness={0.8} /></mesh>
+      <mesh position={[-0.45, 1, 0.45]}><boxGeometry args={[0.05, 2, 0.05]} /><meshStandardMaterial color="#475569" metalness={0.8} /></mesh>
+      <mesh position={[0.45, 1, 0.45]}><boxGeometry args={[0.05, 2, 0.05]} /><meshStandardMaterial color="#475569" metalness={0.8} /></mesh>
+
+      {/* Levels with individual slots for targeting */}
+      {/* Level 0 */}
+      <group name="storage_slot_0">
+        <mesh position={[-0.22, 0.1, 0]}><boxGeometry args={[0.45, 0.05, 0.9]} /><meshStandardMaterial color="#1e293b" /></mesh>
+        <mesh position={[-0.22, 0.4, 0]} visible={false} name="storage_hitbox_0"><boxGeometry args={[0.42, 0.55, 0.8]} /><meshBasicMaterial transparent opacity={0} depthWrite={false} /></mesh>
+      </group>
+      <group name="storage_slot_1">
+        <mesh position={[0.22, 0.1, 0]}><boxGeometry args={[0.45, 0.05, 0.9]} /><meshStandardMaterial color="#1e293b" /></mesh>
+        <mesh position={[0.22, 0.4, 0]} visible={false} name="storage_hitbox_1"><boxGeometry args={[0.42, 0.55, 0.8]} /><meshBasicMaterial transparent opacity={0} depthWrite={false} /></mesh>
+      </group>
+
+      {/* Level 1 */}
+      <group name="storage_slot_2">
+        <mesh position={[-0.22, 0.7, 0]}><boxGeometry args={[0.45, 0.05, 0.9]} /><meshStandardMaterial color="#1e293b" /></mesh>
+        <mesh position={[-0.22, 1.0, 0]} visible={false} name="storage_hitbox_2"><boxGeometry args={[0.42, 0.55, 0.8]} /><meshBasicMaterial transparent opacity={0} depthWrite={false} /></mesh>
+      </group>
+      <group name="storage_slot_3">
+        <mesh position={[0.22, 0.7, 0]}><boxGeometry args={[0.45, 0.05, 0.9]} /><meshStandardMaterial color="#1e293b" /></mesh>
+        <mesh position={[0.22, 1.0, 0]} visible={false} name="storage_hitbox_3"><boxGeometry args={[0.42, 0.55, 0.8]} /><meshBasicMaterial transparent opacity={0} depthWrite={false} /></mesh>
+      </group>
+
+      {/* Level 2 */}
+      <group name="storage_slot_4">
+        <mesh position={[-0.22, 1.3, 0]}><boxGeometry args={[0.45, 0.05, 0.9]} /><meshStandardMaterial color="#1e293b" /></mesh>
+        <mesh position={[-0.22, 1.6, 0]} visible={false} name="storage_hitbox_4"><boxGeometry args={[0.42, 0.55, 0.8]} /><meshBasicMaterial transparent opacity={0} depthWrite={false} /></mesh>
+      </group>
+      <group name="storage_slot_5">
+        <mesh position={[0.22, 1.3, 0]}><boxGeometry args={[0.45, 0.05, 0.9]} /><meshStandardMaterial color="#1e293b" /></mesh>
+        <mesh position={[0.22, 1.6, 0]} visible={false} name="storage_hitbox_5"><boxGeometry args={[0.42, 0.55, 0.8]} /><meshBasicMaterial transparent opacity={0} depthWrite={false} /></mesh>
+      </group>
+
+      {/* Level 3 */}
+      <group name="storage_slot_6">
+        <mesh position={[-0.22, 1.9, 0]}><boxGeometry args={[0.45, 0.05, 0.9]} /><meshStandardMaterial color="#1e293b" /></mesh>
+        <mesh position={[-0.22, 2.2, 0]} visible={false} name="storage_hitbox_6"><boxGeometry args={[0.42, 0.55, 0.8]} /><meshBasicMaterial transparent opacity={0} depthWrite={false} /></mesh>
+      </group>
+      <group name="storage_slot_7">
+        <mesh position={[0.22, 1.9, 0]}><boxGeometry args={[0.45, 0.05, 0.9]} /><meshStandardMaterial color="#1e293b" /></mesh>
+        <mesh position={[0.22, 2.2, 0]} visible={false} name="storage_hitbox_7"><boxGeometry args={[0.42, 0.55, 0.8]} /><meshBasicMaterial transparent opacity={0} depthWrite={false} /></mesh>
+      </group>
+
+      {/* Render Stored Boxes */}
+      {storedBoxIds.map((boxId, i) => {
+        if (!boxId || boxId === "") return null;
+        const box = deliveryBoxes.get(boxId);
+        if (!box) return null;
+        const level = Math.floor(i / 2); const slot = i % 2;
+        const yPos = 0.22 + level * 0.6;
+        const xPos = slot === 0 ? -0.22 : 0.22;
+        return (
+           <group key={`${boxId}_${i}`} position={[xPos, yPos, 0.12]} name={`storage_slot_${i}`}>
+             <mesh castShadow><boxGeometry args={[0.4, 0.25, 0.7]} /><meshStandardMaterial color="#92400e" roughness={0.8} /></mesh>
+             <mesh position={[0.07, 0, 0.352]} rotation={[0, 0, 0]}>
+               <planeGeometry args={[0.24, 0.17]} />
+               <meshStandardMaterial map={getSideLabelTexture(products.find(p => p.id === box.productId), box.amount, box.id)} roughness={0.9} />
+             </mesh>
+             <mesh position={[0, 0.126, 0.25]} rotation={[-Math.PI / 2, 0, 0]}>
+               <planeGeometry args={[0.18, 0.14]} />
+               <meshStandardMaterial map={getTopLabelTexture(products.find(p => p.id === box.productId))} roughness={0.9} />
+             </mesh>
+           </group>
+        );
+      })}
     </group>
   );
 };
@@ -392,6 +661,7 @@ export const EmployeeMesh: React.FC<{ emp: any }> = ({ emp }) => {
   const leftHandRef = useRef<THREE.Mesh>(null);
   const rightHandRef = useRef<THREE.Mesh>(null);
   const isInitialized = useRef<boolean>(false);
+  const [holdingBox, setHoldingBox] = useState<any>(null);
 
   // Target position vector on floor
   const targetPos = new THREE.Vector3(emp.x, 0, emp.z);
@@ -399,12 +669,28 @@ export const EmployeeMesh: React.FC<{ emp: any }> = ({ emp }) => {
   useFrame((state) => {
     if (!meshRef.current) return;
 
+    // Read raw, fast-changing server position directly to bypass React re-renders
+    const room = networkManager.room;
+    if (!room) return;
+    const empRaw = room.state.employees.get(emp.id);
+    if (!empRaw) return;
+
+    // Sync holding state
+    if (empRaw.holdingBoxId) {
+      const box = room.state.deliveryBoxes.get(empRaw.holdingBoxId);
+      if (box && (!holdingBox || holdingBox.id !== box.id)) {
+        setHoldingBox({ id: box.id, productId: box.productId });
+      }
+    } else if (holdingBox) {
+      setHoldingBox(null);
+    }
+
     if (!isInitialized.current) {
-      meshRef.current.position.set(emp.x, 0, emp.z);
+      meshRef.current.position.set(empRaw.x, 0, empRaw.z);
       isInitialized.current = true;
     }
 
-    targetPos.set(emp.x, 0, emp.z);
+    targetPos.set(empRaw.x, 0, empRaw.z);
     meshRef.current.position.lerp(targetPos, 0.12);
 
     const movementVec = targetPos.clone().sub(meshRef.current.position);
@@ -415,7 +701,7 @@ export const EmployeeMesh: React.FC<{ emp: any }> = ({ emp }) => {
       meshRef.current.rotation.y += diff * 0.15;
     } else {
       // Standing still: Use server rotation if provided
-      let diff = (emp.rotY || 0) - meshRef.current.rotation.y;
+      let diff = (empRaw.rotY || 0) - meshRef.current.rotation.y;
       diff = Math.atan2(Math.sin(diff), Math.cos(diff));
       meshRef.current.rotation.y += diff * 0.1;
     }
@@ -436,6 +722,26 @@ export const EmployeeMesh: React.FC<{ emp: any }> = ({ emp }) => {
 
   return (
     <group ref={meshRef}>
+      {/* Carrying Box (Always shown if existing) */}
+      {holdingBox && (
+        <group position={[0, 0.85, 0.4]}>
+          <mesh castShadow receiveShadow>
+            <boxGeometry args={[0.5, 0.3, 0.4]} />
+            <meshStandardMaterial color="#92400e" roughness={0.8} />
+          </mesh>
+          {/* Side Label Sticker */}
+          <mesh position={[0.251, 0.05, 0]} rotation={[0, Math.PI / 2, 0]}>
+            <planeGeometry args={[0.25, 0.18]} />
+            <meshStandardMaterial color="#ffffff" />
+          </mesh>
+          {/* Product Icon on side label */}
+          <Html position={[0.26, 0.05, 0]} rotation={[0, Math.PI / 2, 0]} center transform occlude="blending">
+            <div style={{ fontSize: "1.5rem", userSelect: "none" }}>
+              {products.find(p => p.id === holdingBox.productId)?.icon || "📦"}
+            </div>
+          </Html>
+        </group>
+      )}
       {/* Shadow indicator on floor */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]}>
         <ringGeometry args={[0.22, 0.26, 8]} />
@@ -670,8 +976,10 @@ export const SupermarketGrid: React.FC<SupermarketGridProps> = ({
   const lastTargetedId = useRef<string | null>(null);
   const lastTargetedNpcId = useRef<string | null>(null);
   const lastTargetedBoxId = useRef<string | null>(null);
+  const lastSlotIndex = useRef<number | undefined>(undefined);
   const fpPlacementCell = useRef<{ x: number; z: number } | null>(null);
   const fpIsCellOccupied = useRef<boolean>(false);
+  const pendingAction = useRef<{ type: 'refill'|'checkout'|'pickup', id: string, targetX: number, targetZ: number, slotIndex?: number } | null>(null);
 
   // Setup click triggers on R button to rotate items during placement
   useEffect(() => {
@@ -687,33 +995,69 @@ export const SupermarketGrid: React.FC<SupermarketGridProps> = ({
   // Keyboard listener for first-person interactions (refilling shelves or building on [E])
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === "e" && isFirstPerson) {
-        // Handle Refilling / Payment / PC Activation / Picking up boxes
-        const targetId = lastTargetedId.current;
-        const boxId = lastTargetedBoxId.current;
-        const npcId = lastTargetedNpcId.current;
+      const key = e.key.toLowerCase();
+      
+      // Global keys
+      if (key === "g") {
+        networkManager.sendDropBox();
+        soundManager.playBoxSFX();
+        return;
+      }
 
-        if (boxId) {
-          networkManager.sendPickUpBox(boxId);
-        } else if (targetId) {
-          const shelf = placedItems.get(targetId);
-          if (shelf) {
-            if (shelf.type.startsWith("shelf_") && shelf.stock < shelf.maxStock) {
-              networkManager.sendRefillItem(targetId);
-            } else if (shelf.type === "pc_terminal" || shelf.type.startsWith("shelf_")) {
-              onSelectPlacedId(targetId);
+      if (isFirstPerson) {
+        if (key === "e") {
+          // Handle Refilling / Payment / PC Activation / Picking up boxes
+          const targetId = lastTargetedId.current;
+          const boxId = lastTargetedBoxId.current;
+          const npcId = lastTargetedNpcId.current;
+
+          // 1. NPC Payment has highest priority
+          if (npcId) {
+            networkManager.sendProcessPayment(npcId);
+            soundManager.playScannerBeep();
+          } 
+          // 2. Boxes
+          else if (boxId) {
+            networkManager.sendPickUpBox(boxId);
+            soundManager.playBoxSFX();
+          } 
+          // 3. Shelves / PC / Storage
+          else if (targetId) {
+            const item = placedItems.get(targetId);
+            if (item) {
+              const localPlayer = networkManager.room?.state.players.get(networkManager.sessionId);
+              
+              let isStorageAction = false;
+              if (item.type === "storage_shelf") {
+                if (localPlayer?.holdingBoxId) {
+                  isStorageAction = true; // Store box
+                } else {
+                  const hasBoxes = item.storedBoxIds && item.storedBoxIds.some((id: string) => id !== "");
+                  if (hasBoxes) isStorageAction = true;
+                }
+              } else if (localPlayer?.holdingBoxId && item.type.startsWith("shelf_")) {
+                isStorageAction = true; // Refill sales shelf
+              }
+
+              if (isStorageAction) {
+                networkManager.room?.send("refillItem", { id: targetId, slotIndex: lastSlotIndex.current });
+                soundManager.playRestock();
+              } else if (item.type === "storage_shelf" || item.type === "pc_terminal" || item.type.startsWith("shelf_")) {
+                onSelectPlacedId(targetId);
+                soundManager.playClick();
+              }
             }
+          } 
+          // 4. Building
+          else if (selectedCatalogItem && fpPlacementCell.current && !fpIsCellOccupied.current) {
+            networkManager.sendPlaceItem(
+              selectedCatalogItem,
+              fpPlacementCell.current.x,
+              fpPlacementCell.current.z,
+              placementRotation
+            );
+            soundManager.playBuild();
           }
-        } else if (npcId) {
-          networkManager.sendProcessPayment(npcId);
-        } else if (selectedCatalogItem && fpPlacementCell.current && !fpIsCellOccupied.current) {
-          // Handle Building in First Person
-          networkManager.sendPlaceItem(
-            selectedCatalogItem,
-            fpPlacementCell.current.x,
-            fpPlacementCell.current.z,
-            placementRotation
-          );
         }
       }
     };
@@ -721,22 +1065,78 @@ export const SupermarketGrid: React.FC<SupermarketGridProps> = ({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isFirstPerson, placedItems, npcs, selectedCatalogItem, placementRotation]);
 
+  // Mouse click handler for shooting AK-47 in first-person mode
+  useEffect(() => {
+    if (!isFirstPerson) return;
+    const handleMouseDown = (e: MouseEvent) => {
+      if (e.button !== 0) return; // Only left click
+      if (document.pointerLockElement === null) return; // Must have pointer lock
+      const room = networkManager.room;
+      if (!room) return;
+      const player = room.state.players.get(networkManager.sessionId);
+      if (player && player.holdingAK47) {
+        networkManager.sendShoot();
+      }
+    };
+    window.addEventListener("mousedown", handleMouseDown);
+    return () => window.removeEventListener("mousedown", handleMouseDown);
+  }, [isFirstPerson]);
+
   // Compute grid hover position or first-person look targets
   useFrame(() => {
+    // Process pending top-down actions
+    if (!isFirstPerson && pendingAction.current) {
+      const room = networkManager.room;
+      if (room) {
+        const player = room.state.players.get(networkManager.sessionId);
+        if (player) {
+          const dist = Math.sqrt(Math.pow(player.x - pendingAction.current.targetX, 2) + Math.pow(player.z - pendingAction.current.targetZ, 2));
+          if (dist < 1.5) {
+             const action = pendingAction.current;
+             pendingAction.current = null;
+             if (action.type === 'refill') {
+                networkManager.room?.send("refillItem", { id: action.id, slotIndex: action.slotIndex });
+                soundManager.playRestock();
+             }
+             else if (action.type === 'checkout') {
+                networkManager.sendProcessPayment(action.id);
+                soundManager.playScannerBeep();
+             }
+             else if (action.type === 'pickup') {
+                networkManager.sendPickUpBox(action.id);
+                soundManager.playBoxSFX();
+             }
+          }
+        }
+      }
+    }
+
     if (isFirstPerson) {
       // ... (existing first person logic) ...
       // 1. Raycast from camera center (crosshair) to check what player is looking at
       raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
 
+      // Temporarily enable storage hitboxes for raycasting
+      const hitboxes: THREE.Object3D[] = [];
+      scene.traverse((obj) => {
+        if (obj.name && obj.name.startsWith("storage_hitbox_")) {
+          obj.visible = true;
+          hitboxes.push(obj);
+        }
+      });
+
       // Check for items/npcs/boxes
       const itemsList: THREE.Object3D[] = [];
       scene.traverse((obj) => {
-        if (obj.name && (obj.name.startsWith("placed_item_") || obj.name.startsWith("npc_") || obj.name.startsWith("delivery_box_"))) {
+        if (obj.name && (obj.name.startsWith("placed_item_") || obj.name.startsWith("npc_") || obj.name.startsWith("delivery_box_") || obj.name.startsWith("storage_hitbox_"))) {
           itemsList.push(obj);
         }
       });
 
       const intersects = raycaster.intersectObjects(itemsList, true);
+
+      // Restore invisible state immediately after raycast
+      hitboxes.forEach(h => h.visible = false);
       let foundId: string | null = null;
       let foundNpcId: string | null = null;
       let foundBoxId: string | null = null;
@@ -748,6 +1148,17 @@ export const SupermarketGrid: React.FC<SupermarketGridProps> = ({
       if (intersects.length > 0) {
         let current: THREE.Object3D | null = intersects[0].object;
         const hitDistance = intersects[0].distance;
+        let foundSlotIndex: number | undefined = undefined;
+
+        // Check if we hit a specific storage slot first
+        let checkSlot: THREE.Object3D | null = current;
+        while (checkSlot && !checkSlot.name.startsWith("placed_item_")) {
+          if (checkSlot.name.startsWith("storage_slot_")) {
+            foundSlotIndex = parseInt(checkSlot.name.replace("storage_slot_", ""));
+            break;
+          }
+          checkSlot = checkSlot.parent;
+        }
 
         // Find ancestor group that represents the placed item, NPC, or Box
         while (current && !current.name.startsWith("placed_item_") && !current.name.startsWith("npc_") && !current.name.startsWith("delivery_box_")) {
@@ -776,6 +1187,48 @@ export const SupermarketGrid: React.FC<SupermarketGridProps> = ({
                 label = "Tiefkühltruhe";
               }
               cost = missing * unitCost;
+            } else if (shelf && shelf.type === "storage_shelf") {
+              foundId = itemId;
+              const localPlayer = networkManager.room?.state.players.get(networkManager.sessionId);
+              const holdingBoxId = localPlayer?.holdingBoxId;
+
+              if (foundSlotIndex !== undefined) {
+                const boxId = shelf.storedBoxIds[foundSlotIndex];
+                if (boxId) {
+                  const box = deliveryBoxes.get(boxId);
+                  const product = box ? products.find(p => p.id === box.productId) : null;
+                  const prodName = product ? `${product.icon} ${product.name}` : "Kiste";
+                  if (holdingBoxId) {
+                    label = `Lagerregal (Slot ${foundSlotIndex + 1} belegt mit ${prodName})`;
+                  } else {
+                    label = `Lagerregal Slot ${foundSlotIndex + 1}: ${prodName} nehmen [E]`;
+                  }
+                } else {
+                  if (holdingBoxId) {
+                    const heldBox = deliveryBoxes.get(holdingBoxId);
+                    const product = heldBox ? products.find(p => p.id === heldBox.productId) : null;
+                    const prodName = product ? `${product.icon} ${product.name}` : "Kiste";
+                    label = `Lagerregal Slot ${foundSlotIndex + 1}: ${prodName} einräumen [E]`;
+                  } else {
+                    label = `Lagerregal Slot ${foundSlotIndex + 1} (Leer)`;
+                  }
+                }
+              } else {
+                const contents: string[] = [];
+                shelf.storedBoxIds.forEach((boxId: string, idx: number) => {
+                  if (boxId) {
+                    const box = deliveryBoxes.get(boxId);
+                    const product = box ? products.find(p => p.id === box.productId) : null;
+                    if (product) contents.push(`Slot ${idx + 1}: ${product.icon}`);
+                  }
+                });
+                if (contents.length > 0) {
+                  label = `Lagerregal (${contents.join(", ")})`;
+                } else {
+                  label = "Lagerregal (Leer)";
+                }
+              }
+              lastSlotIndex.current = foundSlotIndex;
             } else if (shelf && shelf.type === "cash_register") {
               foundId = itemId;
               label = "Kasse";
@@ -893,10 +1346,19 @@ export const SupermarketGrid: React.FC<SupermarketGridProps> = ({
   const handlePointerDown = (e: any) => {
     e.stopPropagation();
 
-    // Right click deselects building/moving item
+    // Right click
     if (e.button === 2) {
-      if (selectedCatalogItem) onSelectCatalogItem?.(null);
-      if (isMovingItem) onMoveComplete?.();
+      // 1. Deselect building/moving item
+      if (selectedCatalogItem) { onSelectCatalogItem?.(null); soundManager.playClick(); return; }
+      if (isMovingItem) { onMoveComplete?.(); soundManager.playClick(); return; }
+      
+      // 2. DROP BOX if holding one
+      const localPlayer = networkManager.room?.state.players.get(networkManager.sessionId);
+      if (localPlayer?.holdingBoxId) {
+        networkManager.sendDropBox();
+        soundManager.playBoxSFX();
+        return;
+      }
       return;
     }
 
@@ -910,6 +1372,7 @@ export const SupermarketGrid: React.FC<SupermarketGridProps> = ({
           placementRotation
         );
         onMoveComplete?.();
+        soundManager.playBuild();
       }
       return;
     }
@@ -923,13 +1386,27 @@ export const SupermarketGrid: React.FC<SupermarketGridProps> = ({
           hoveredCell.z,
           placementRotation
         );
+        soundManager.playBuild();
       }
     } 
     // 2D Select Mode: Clicking placed item moves player there and selects it
     else if (!isFirstPerson && !selectedCatalogItem) {
       // Find item or floor under mouse
       raycaster.setFromCamera(mouse, camera);
+
+      // Temporarily enable storage hitboxes for raycasting
+      const hitboxes: THREE.Object3D[] = [];
+      scene.traverse((obj) => {
+        if (obj.name && obj.name.startsWith("storage_hitbox_")) {
+          obj.visible = true;
+          hitboxes.push(obj);
+        }
+      });
+
       const intersects = raycaster.intersectObjects(scene.children, true);
+
+      // Restore invisible state immediately after raycast
+      hitboxes.forEach(h => h.visible = false);
       
       // 1. Check for items first
       const itemHit = intersects.find(hit => {
@@ -943,6 +1420,18 @@ export const SupermarketGrid: React.FC<SupermarketGridProps> = ({
 
       if (itemHit) {
         let current: THREE.Object3D | null = itemHit.object;
+        let clickedSlotIndex: number | undefined = undefined;
+
+        // Traverse up to find if a slot or slot box was clicked
+        let checkSlot: THREE.Object3D | null = current;
+        while (checkSlot && !checkSlot.name.startsWith("placed_item_")) {
+          if (checkSlot.name && checkSlot.name.startsWith("storage_slot_")) {
+            clickedSlotIndex = parseInt(checkSlot.name.replace("storage_slot_", ""));
+            break;
+          }
+          checkSlot = checkSlot.parent;
+        }
+
         while (current && !current.name.startsWith("placed_item_") && !current.name.startsWith("delivery_box_")) {
           current = current.parent;
         }
@@ -952,10 +1441,31 @@ export const SupermarketGrid: React.FC<SupermarketGridProps> = ({
             const item = placedItems.get(itemId);
             
             if (item) {
-              // MOVE PLAYER TO ITEM
               const targetX = item.gridX;
               const targetZ = item.gridZ + 0.8; 
               networkManager.sendMoveTo(targetX, targetZ);
+
+              // 1. Storage action logic
+              const localPlayer = networkManager.room?.state.players.get(networkManager.sessionId);
+              
+              let isStorageAction = false;
+              if (item.type === "storage_shelf") {
+                if (localPlayer?.holdingBoxId) {
+                  isStorageAction = true; // Store box
+                } else {
+                  // Only retrieve if the shelf actually has boxes
+                  const hasBoxes = item.storedBoxIds && item.storedBoxIds.some((id: string) => id !== "");
+                  if (hasBoxes) isStorageAction = true;
+                }
+              } else if (localPlayer?.holdingBoxId && item.type.startsWith("shelf_")) {
+                isStorageAction = true; // Refill sales shelf
+              }
+              
+              if (isStorageAction) {
+                 pendingAction.current = { type: 'refill', id: itemId, targetX, targetZ, slotIndex: clickedSlotIndex };
+                 onSelectPlacedId(null);
+                 return;
+              }
               
               // If it's a cash register, try to checkout waiting NPCs
               if (item.type === "cash_register") {
@@ -967,7 +1477,7 @@ export const SupermarketGrid: React.FC<SupermarketGridProps> = ({
                 );
                 
                 if (waitingNpc) {
-                  networkManager.sendProcessPayment(waitingNpc.id);
+                  pendingAction.current = { type: 'checkout', id: waitingNpc.id, targetX, targetZ };
                   onSelectPlacedId(null);
                   return;
                 }
@@ -983,9 +1493,7 @@ export const SupermarketGrid: React.FC<SupermarketGridProps> = ({
               const targetX = box.x;
               const targetZ = box.z;
               networkManager.sendMoveTo(targetX, targetZ);
-              
-              // Only pick up if very close or after walking there (handled by server pickUpBox logic too)
-              networkManager.sendPickUpBox(boxId);
+              pendingAction.current = { type: 'pickup', id: boxId, targetX, targetZ };
               onSelectPlacedId(null);
             }
           }
@@ -1008,11 +1516,12 @@ export const SupermarketGrid: React.FC<SupermarketGridProps> = ({
   };
 
   // Helper to render shelf component by type
-  const renderShelfMesh = (type: string, stock?: number, maxStock?: number, productId?: string) => {
+  const renderShelfMesh = (type: string, stock?: number, maxStock?: number, productId?: string, storedBoxIds?: string[]) => {
     switch (type) {
       case "shelf_groceries": return <ShelfGroceries stock={stock} maxStock={maxStock} productId={productId} />;
       case "shelf_produce": return <ShelfProduce stock={stock} productId={productId} />;
       case "shelf_frozen": return <ShelfFrozen stock={stock} productId={productId} />;
+      case "storage_shelf": return <StorageShelf storedBoxIds={storedBoxIds} deliveryBoxes={deliveryBoxes} />;
       case "cash_register": return <CashRegister />;
       case "pc_terminal": return <PCTerminal />;
       default: return null;
@@ -1044,9 +1553,16 @@ export const SupermarketGrid: React.FC<SupermarketGridProps> = ({
       <StoreWalls />
 
       {/* Delivery Boxes */}
-      {Array.from(deliveryBoxes.entries()).map(([id, box]: [string, any]) => (
-        <DeliveryBoxMesh key={id} box={box} />
-      ))}
+      {Array.from(deliveryBoxes.entries()).map(([id, box]: [string, any]) => {
+        let isStored = false;
+        placedItems.forEach((item: any) => {
+          if (item.storedBoxIds && item.storedBoxIds.includes(id)) {
+            isStored = true;
+          }
+        });
+        if (isStored) return null;
+        return <StoreDeliveryBox key={id} box={box} />;
+      })}
 
       {/* Employees */}
       {Array.from(employees.entries()).map(([id, emp]: [string, any]) => (
@@ -1060,16 +1576,15 @@ export const SupermarketGrid: React.FC<SupermarketGridProps> = ({
 
         return (
           <group 
-            key={id}
+            key={id} 
             name={`placed_item_${id}`}
             position={[item.gridX, 0, item.gridZ]}
             rotation={[0, getRotationAngle(item.rotation), 0]}
           >
-            {renderShelfMesh(item.type, item.stock, item.maxStock, item.productId)}
+            {renderShelfMesh(item.type, item.stock, item.maxStock, item.productId, item.storedBoxIds)}
           </group>
         );
       })}
-
       {/* 3. Placement Preview Box (visible when placing or moving) */}
       {((selectedCatalogItem || (isMovingItem && activePlacedItem)) && hoveredCell) && (
         <group 

@@ -19,11 +19,13 @@ import confetti from "canvas-confetti";
 import { networkManager } from "./NetworkManager";
 import { GameScene } from "./GameScene";
 import { InputManager } from "./InputManager";
+import { soundManager } from "./SoundManager";
 
 const catalog = [
   { type: "shelf_groceries", name: "Lebensmittelregal", cost: 300, desc: "Standardregal für Müsli, Konserven & Trockenwaren.", icon: "🥫", category: "regale" },
   { type: "shelf_produce", name: "Frischetheke", cost: 500, desc: "Gekühltes Display für frisches Obst und gesundes Gemüse.", icon: "🍎", category: "regale" },
   { type: "shelf_frozen", name: "Tiefkühltruhe", cost: 800, desc: "Spezialtruhe für Pizza, Eis und andere Tiefkühlkost.", icon: "🍦", category: "regale" },
+  { type: "storage_shelf", name: "Lagerregal", cost: 400, desc: "Bietet Platz für bis zu 8 Warenkisten. Ideal für das Backoffice.", icon: "📦", category: "regale" },
   { type: "cash_register", name: "Kasse", cost: 1200, desc: "Zentrale Bezahlstelle. Mitarbeiter können hier kassieren.", icon: "💳", category: "technik" },
   { type: "pc_terminal", name: "Management-PC", cost: 600, desc: "OS-Terminal zur Personalverwaltung und für Marketing.", icon: "💻", category: "technik" },
 ];
@@ -38,6 +40,7 @@ const products = [
   { id: "pizza", name: "Tiefkühlpizza", category: "shelf_frozen", price: 5, sellPrice: 12, icon: "🍕", color: "#fb923c" },
   { id: "icecream", name: "Eiscreme", category: "shelf_frozen", price: 6, sellPrice: 15, icon: "🍦", color: "#60a5fa" },
   { id: "frozen_veggies", name: "TK-Gemüse", category: "shelf_frozen", price: 4, sellPrice: 9, icon: "🥦", color: "#4ade80" },
+  { id: "ak47", name: "AK-47", category: "weapon", price: 800, sellPrice: 0, icon: "🔫", color: "#475569" },
 ];
 
 export const GameContainer: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
@@ -47,7 +50,6 @@ export const GameContainer: React.FC<{ onLeave: () => void }> = ({ onLeave }) =>
   const [npcs, setNpcs] = useState<Map<string, any>>(new Map());
   const [employees, setEmployees] = useState<Map<string, any>>(new Map());
   const [deliveryBoxes, setDeliveryBoxes] = useState<Map<string, any>>(new Map());
-  const [inventory, setInventory] = useState<Map<string, number>>(new Map());
   const [budget, setBudget] = useState(0);
   const [storeName, setStoreName] = useState("");
   const [storeLevel, setStoreLevel] = useState(1);
@@ -65,6 +67,8 @@ export const GameContainer: React.FC<{ onLeave: () => void }> = ({ onLeave }) =>
   const [activeCategory, setActiveCategory] = useState<string>("all");
   const [pcTab, setPcTab] = useState<string>("staff");
   const chatMessagesEndRef = useRef<HTMLDivElement>(null);
+  const [soundOn, setSoundOn] = useState(soundManager.isSoundEnabled());
+  const [musicOn, setMusicOn] = useState(soundManager.isMusicEnabled());
 
   const getCatalogLabel = (type: string) => catalog.find((i) => i.type === type)?.name || type;
 
@@ -98,17 +102,36 @@ export const GameContainer: React.FC<{ onLeave: () => void }> = ({ onLeave }) =>
   }, []);
 
   useEffect(() => {
+    // Music autoplay trigger on first interaction
+    const startMusicOnInteraction = () => {
+      soundManager.setMusicEnabled(true);
+      document.removeEventListener("click", startMusicOnInteraction);
+      document.removeEventListener("keydown", startMusicOnInteraction);
+    };
+    document.addEventListener("click", startMusicOnInteraction);
+    document.addEventListener("keydown", startMusicOnInteraction);
+
     const room = networkManager.room;
     if (!room) return;
 
+    let mounted = true;
+
     const updateLocalState = () => {
-      if (!room.state) return;
+      if (!room.state || !mounted) return;
 
       const p = new Map();
-      room.state.players.forEach((v: any, k: string) => p.set(k, { id: v.id, name: v.name, x: v.x, y: v.y, z: v.z, rotY: v.rotY, color: v.color, isFirstPerson: v.isFirstPerson }));
+      room.state.players.forEach((v: any, k: string) => p.set(k, { 
+        id: v.id, name: v.name, x: v.x, y: v.y, z: v.z, rotY: v.rotY, 
+        color: v.color, isFirstPerson: v.isFirstPerson, 
+        holdingBoxId: v.holdingBoxId,
+        holdingAK47: v.holdingAK47
+      }));
       setPlayers(p);
       const i = new Map();
-      room.state.placedItems.forEach((v: any, k: string) => i.set(k, { id: v.id, type: v.type, gridX: v.gridX, gridZ: v.gridZ, rotation: v.rotation, stock: v.stock, maxStock: v.maxStock, productId: v.productId }));
+      room.state.placedItems.forEach((v: any, k: string) => {
+        const storedBoxIds = v.storedBoxIds ? Array.from(v.storedBoxIds) : [];
+        i.set(k, { id: v.id, type: v.type, gridX: v.gridX, gridZ: v.gridZ, rotation: v.rotation, stock: v.stock, maxStock: v.maxStock, productId: v.productId, storedBoxIds });
+      });
       setPlacedItems(i);
 
       // If the currently moving item was updated or removed, sync state
@@ -124,14 +147,11 @@ export const GameContainer: React.FC<{ onLeave: () => void }> = ({ onLeave }) =>
       room.state.employees.forEach((v: any, k: string) => e.set(k, { id: v.id, name: v.name, x: v.x, z: v.z, rotY: v.rotY, state: v.state, task: v.task, color: v.color, salary: v.salary }));
       setEmployees(e);
       const boxes = new Map();
-      room.state.deliveryBoxes.forEach((v: any, k: string) => boxes.set(k, { id: v.id, productId: v.productId, amount: v.amount, x: v.x, z: v.z }));
+      room.state.deliveryBoxes.forEach((v: any, k: string) => boxes.set(k, { id: v.id, productId: v.productId, amount: v.amount, x: v.x, z: v.z, isHeld: v.isHeld }));
       setDeliveryBoxes(boxes);
-      const inv = new Map();
-      room.state.inventory.forEach((v: number, k: string) => inv.set(k, v));
-      setInventory(inv);
 
       setBudget(room.state.budget || 0); 
-      setStoreName(room.state.storeName || "Super-Saver"); 
+      setStoreName(room.state.storeName || "");
       setStoreLevel(room.state.storeLevel || 1); 
       setStoreExp(room.state.storeExp || 0); 
       setMarketingTimer(room.state.marketingTimer || 0);
@@ -139,10 +159,21 @@ export const GameContainer: React.FC<{ onLeave: () => void }> = ({ onLeave }) =>
     updateLocalState();
     const removals: (() => void)[] = [];
 
-    // State change listeners
-    removals.push(room.state.players.onAdd((p: any) => { updateLocalState(); p.listen("isFirstPerson", updateLocalState); }));
+    removals.push(room.state.players.onAdd((p: any) => { 
+      updateLocalState(); 
+      p.listen("isFirstPerson", updateLocalState); 
+      p.listen("holdingBoxId", updateLocalState);
+      p.listen("holdingAK47", updateLocalState);
+    }));
     removals.push(room.state.players.onRemove(updateLocalState));
-    removals.push(room.state.placedItems.onAdd((item: any) => { updateLocalState(); item.listen("stock", updateLocalState); item.listen("productId", updateLocalState); }));
+    removals.push(room.state.placedItems.onAdd((item: any) => { 
+      updateLocalState(); 
+      item.listen("stock", updateLocalState); 
+      item.listen("productId", updateLocalState); 
+      if (item.storedBoxIds) {
+        item.storedBoxIds.onChange(updateLocalState);
+      }
+    }));
     removals.push(room.state.placedItems.onRemove(updateLocalState));
     removals.push(room.state.npcs.onAdd((npc: any) => { updateLocalState(); npc.listen("state", updateLocalState); npc.listen("message", updateLocalState); }));
     removals.push(room.state.npcs.onRemove(updateLocalState));
@@ -151,10 +182,11 @@ export const GameContainer: React.FC<{ onLeave: () => void }> = ({ onLeave }) =>
       emp.listen("state", updateLocalState); emp.listen("task", updateLocalState); emp.listen("x", updateLocalState); emp.listen("z", updateLocalState);
     }));
     removals.push(room.state.employees.onRemove(updateLocalState));
-    removals.push(room.state.deliveryBoxes.onAdd(updateLocalState));
+    removals.push(room.state.deliveryBoxes.onAdd((box: any) => {
+      updateLocalState();
+      box.listen("isHeld", updateLocalState);
+    }));
     removals.push(room.state.deliveryBoxes.onRemove(updateLocalState));
-    removals.push(room.state.inventory.onAdd(updateLocalState));
-    removals.push(room.state.inventory.onChange(updateLocalState));
     removals.push(room.state.listen("budget", (v: number) => setBudget(v || 0)));
     removals.push(room.state.listen("marketingTimer", (v: number) => setMarketingTimer(v || 0)));
 
@@ -169,6 +201,15 @@ export const GameContainer: React.FC<{ onLeave: () => void }> = ({ onLeave }) =>
     removals.push(room.onMessage("levelup", (d: any) => {
       setChatMessages((p) => [...p, { message: `🎉 LEVEL ${d.level}!`, timestamp: Date.now(), type: "levelup" }]);
       confetti({ particleCount: 80, spread: 70, origin: { y: 0.6 } });
+      soundManager.playCashRegister();
+    }));
+    removals.push(room.onMessage("placed", (d: any) => {
+      setChatMessages((p) => [...p, { type: "system", message: `🏗️ ${d.player} hat ein ${getCatalogLabel(d.type)} platziert.`, timestamp: Date.now() }]);
+      soundManager.playBuild();
+    }));
+    removals.push(room.onMessage("removed", (d: any) => {
+      setChatMessages((p) => [...p, { type: "system", message: `🗑️ ${d.player} hat ein ${getCatalogLabel(d.type)} entfernt.`, timestamp: Date.now() }]);
+      soundManager.playClick();
     }));
     removals.push(room.onMessage("moneyChange", (data: any) => {
       const id = Date.now() + Math.random();
@@ -176,10 +217,29 @@ export const GameContainer: React.FC<{ onLeave: () => void }> = ({ onLeave }) =>
       setTimeout(() => {
         setMoneyFeed((prev) => prev.filter(m => m.id !== id));
       }, 2000);
+      if (data.amount > 0) {
+        soundManager.playCashRegister();
+      } else {
+        soundManager.playClick();
+      }
     }));
-    removals.push(room.onMessage("error", (d: any) => setChatMessages((p) => [...p, { type: "system", message: `❌ FEHLER: ${d.message}`, timestamp: Date.now() }])));
+    removals.push(room.onMessage("error", (d: any) => {
+      setChatMessages((p) => [...p, { type: "system", message: `❌ FEHLER: ${d.message}`, timestamp: Date.now() }]);
+      soundManager.playClick();
+    }));
+    removals.push(room.onMessage("gunshot", () => {
+      soundManager.playClick(); // Gunshot sound (reuse click as placeholder)
+    }));
 
-    return () => { removals.forEach(r => { if (typeof r === 'function') r(); }); };
+    // Handle room disposal
+    room.onLeave(() => {
+      removals.forEach(r => { if (typeof r === 'function') r(); });
+    });
+
+    return () => { 
+      mounted = false;
+      removals.forEach(r => { if (typeof r === 'function') r(); }); 
+    };
   }, []);
 
   useEffect(() => { chatMessagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chatMessages]);
@@ -194,6 +254,7 @@ export const GameContainer: React.FC<{ onLeave: () => void }> = ({ onLeave }) =>
       const item = placedItems.get(selectedPlacedId);
       const label = item ? getCatalogLabel(item.type) : "dieses Objekt";
       
+      soundManager.playClick();
       if (window.confirm(`Möchtest du ${label} wirklich für 50% des Kaufpreises verkaufen?`)) {
         networkManager.sendRemoveItem(selectedPlacedId); 
         setSelectedPlacedId(null); 
@@ -204,6 +265,10 @@ export const GameContainer: React.FC<{ onLeave: () => void }> = ({ onLeave }) =>
   const activePlacedItem = selectedPlacedId ? placedItems.get(selectedPlacedId) : null;
   const expPercentage = Math.min(100, (storeExp / (storeLevel * 500)) * 100);
   const filteredCatalog = catalog.filter(item => activeCategory === "all" || item.category === activeCategory);
+  
+  const localPlayer = players.get(networkManager.sessionId);
+  const holdingBoxId = localPlayer?.holdingBoxId;
+  const holdingAK47 = localPlayer?.holdingAK47;
 
   return (
     <div className="game-container">
@@ -295,15 +360,70 @@ export const GameContainer: React.FC<{ onLeave: () => void }> = ({ onLeave }) =>
           </div>
           <div style={{ display: "flex", gap: "12px" }}>
             <div className="glass-panel" style={{ padding: "8px 16px", display: "flex", alignItems: "center", gap: "8px", fontSize: "0.85rem" }}><Users size={16} color="var(--color-primary)" /><span>{players.size} Spieler</span></div>
-            <button className="btn-primary" onClick={() => { setIsFirstPerson(!isFirstPerson); setIsBuildMenuOpen(false); setSelectedCatalogItem(null); setSelectedPlacedId(null); }}>{isFirstPerson ? <><Warehouse size={16} /> Management</> : <><Eye size={16} /> First-Person</>}</button>
-            <button className="btn-secondary" onClick={onLeave}>Verlassen</button>
-          </div>
+            
+            {/* Audio Toggle Panel */}
+            <div className="glass-panel" style={{ padding: "8px 12px", display: "flex", alignItems: "center", gap: "12px", fontSize: "0.85rem", pointerEvents: "auto" }}>
+              <button 
+                onClick={() => {
+                  const nextVal = !soundOn;
+                  soundManager.setSoundEnabled(nextVal);
+                  setSoundOn(nextVal);
+                  if (nextVal) soundManager.playClick();
+                }}
+                style={{ background: "none", border: "none", color: soundOn ? "var(--color-primary)" : "#64748b", cursor: "pointer", fontSize: "13px", padding: 0, display: "flex", alignItems: "center", gap: "4px" }}
+                title="Sound Effekte an/ausschalten"
+              >
+                <span>{soundOn ? "🔊" : "🔇"} SFX</span>
+              </button>
+              <div style={{ width: "1px", height: "14px", background: "rgba(255,255,255,0.15)" }} />
+              <button 
+                onClick={() => {
+                  const nextVal = !musicOn;
+                  soundManager.setMusicEnabled(nextVal);
+                  setMusicOn(nextVal);
+                }}
+                style={{ background: "none", border: "none", color: musicOn ? "var(--color-secondary)" : "#64748b", cursor: "pointer", fontSize: "13px", padding: 0, display: "flex", alignItems: "center", gap: "4px" }}
+                title="Supermarkt-Hintergrundmusik an/ausschalten"
+              >
+                <span>🎵 Musik: {musicOn ? "AN" : "AUS"}</span>
+              </button>
+            </div>
+
+            <button className="btn-primary" onClick={() => { 
+              const nextFP = !isFirstPerson;
+              setIsFirstPerson(nextFP); 
+              // Default build menu to OPEN when entering management mode, CLOSED when entering FP
+              setIsBuildMenuOpen(!nextFP); 
+              setSelectedCatalogItem(null); 
+              setSelectedPlacedId(null); 
+              soundManager.playClick();
+            }}>
+              {isFirstPerson ? <><Warehouse size={16} /> Management</> : <><Eye size={16} /> First-Person</>}
+            </button>
+            {!isFirstPerson && !isBuildMenuOpen && (
+              <button className="btn-primary" onClick={() => { setIsBuildMenuOpen(true); soundManager.playClick(); }} style={{ background: "var(--color-secondary)" }}>
+                <ShoppingBasket size={16} /> Baumenü
+              </button>
+            )}
+            <button className="btn-secondary" onClick={() => { soundManager.playClick(); onLeave(); }}>Verlassen</button>          </div>
         </div>
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", width: "100%" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
             <div className="glass-panel" style={{ padding: "12px 16px", fontSize: "0.75rem", width: "320px" }}><div style={{ fontWeight: 700, color: "var(--color-primary)", marginBottom: "4px", display: "flex", alignItems: "center", gap: "6px" }}><Keyboard size={14} /> Steuerung</div><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px", opacity: 0.8 }}><span><kbd>WASD</kbd> Bewegen</span><span><kbd>L-Shift</kbd> Rennen</span><span><kbd>E</kbd> Interagieren</span><span><kbd>B</kbd> Baumenu</span><span><kbd>1-5</kbd> Auswahl</span><span><kbd>R</kbd> Drehen</span></div></div>
             <div className="glass-panel chat-container">
+              {holdingBoxId && (
+                <div style={{ padding: "8px 12px", background: "rgba(245, 158, 11, 0.2)", border: "1px solid #f59e0b", borderRadius: "6px", marginBottom: "8px", fontSize: "0.8rem", color: "#f59e0b", display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span style={{ fontSize: "1rem" }}>📦</span>
+                  <span>Kiste in der Hand. <kbd style={{ background: "rgba(255,255,255,0.1)", padding: "1px 4px", borderRadius: "3px" }}>G</kbd> oder Rechtsklick zum Absetzen.</span>
+                </div>
+              )}
+              {holdingAK47 && (
+                <div style={{ padding: "8px 12px", background: "rgba(239, 68, 68, 0.2)", border: "1px solid #ef4444", borderRadius: "6px", marginBottom: "8px", fontSize: "0.8rem", color: "#ef4444", display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span style={{ fontSize: "1rem" }}>🔫</span>
+                  <span>AK-47 ausgerüstet! <kbd style={{ background: "rgba(255,255,255,0.1)", padding: "1px 4px", borderRadius: "3px" }}>Linksklick</kbd> zum Schießen. <kbd style={{ background: "rgba(255,255,255,0.1)", padding: "1px 4px", borderRadius: "3px" }}>G</kbd> zum Ablegen.</span>
+                </div>
+              )}
               <div className="chat-messages" style={{ height: "140px", overflowY: "auto", padding: "8px" }}>
                 {chatMessages.map((msg, i) => (
                   <div key={i} className="chat-message" style={{ marginBottom: "4px", fontSize: "0.85rem" }}>{msg.type === "system" ? <span style={{ color: "var(--color-secondary)" }}>📢 {msg.message}</span> : msg.type === "income" ? <span style={{ color: "#10b981" }}>💵 {msg.message}</span> : <><span style={{ color: msg.color || "var(--color-primary)", fontWeight: 700 }}>{msg.sender}:</span> {msg.message}</>}</div>
@@ -315,9 +435,8 @@ export const GameContainer: React.FC<{ onLeave: () => void }> = ({ onLeave }) =>
           </div>
 
           {/* EXPANDED CATALOG WITH CATEGORIES */}
-          {(isBuildMenuOpen || !isFirstPerson) && (
-            <div className="glass-panel catalog-panel" style={{ 
-              pointerEvents: "auto", width: "450px", height: "600px", display: "flex", flexDirection: "column",
+          {isBuildMenuOpen && (
+            <div className="glass-panel catalog-panel" style={{              pointerEvents: "auto", width: "450px", height: "600px", display: "flex", flexDirection: "column",
               border: isBuildMenuOpen ? "2px solid var(--color-primary)" : "1px solid rgba(255,255,255,0.1)" 
             }}>
               <div style={{ display: "flex", justifyContent: "space-between", padding: "16px 20px", alignItems: "center", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
@@ -338,7 +457,7 @@ export const GameContainer: React.FC<{ onLeave: () => void }> = ({ onLeave }) =>
                   { id: "regale", label: "Regale", icon: <ShoppingBasket size={14} /> },
                   { id: "technik", label: "Technik", icon: <Monitor size={14} /> }
                 ].map(cat => (
-                  <button key={cat.id} onClick={() => setActiveCategory(cat.id)} style={{ flex: 1, padding: "10px", border: "none", borderRadius: "6px", fontSize: "0.8rem", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", background: activeCategory === cat.id ? "var(--color-primary)" : "rgba(255,255,255,0.05)", color: activeCategory === cat.id ? "#000" : "#fff", fontWeight: 700, transition: "all 0.2s" }}>
+                  <button key={cat.id} onClick={() => { setActiveCategory(cat.id); soundManager.playClick(); }} style={{ flex: 1, padding: "10px", border: "none", borderRadius: "6px", fontSize: "0.8rem", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", background: activeCategory === cat.id ? "var(--color-primary)" : "rgba(255,255,255,0.05)", color: activeCategory === cat.id ? "#000" : "#fff", fontWeight: 700, transition: "all 0.2s" }}>
                     {cat.icon} {cat.label}
                   </button>
                 ))}
@@ -350,6 +469,7 @@ export const GameContainer: React.FC<{ onLeave: () => void }> = ({ onLeave }) =>
                     const isSelected = selectedCatalogItem === item.type;
                     setSelectedCatalogItem(isSelected ? null : item.type); 
                     setSelectedPlacedId(null); 
+                    soundManager.playClick();
                     if (isFirstPerson) {
                       setIsBuildMenuOpen(false);
                       if (canvasRef.current) canvasRef.current.requestPointerLock();
@@ -371,7 +491,19 @@ export const GameContainer: React.FC<{ onLeave: () => void }> = ({ onLeave }) =>
         </div>
 
         {isFirstPerson && targetedShelf && !isBuildMenuOpen && !selectedPlacedId && (
-          <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, 40px)", pointerEvents: "none" }}><div className="glass-panel" style={{ padding: "12px 20px", textAlign: "center", border: "1.5px solid var(--color-primary)", boxShadow: "0 0 15px rgba(20, 184, 166, 0.3)" }}><div style={{ fontWeight: 800, fontSize: "0.9rem" }}>{targetedShelf.label}</div><div style={{ fontSize: "0.75rem", opacity: 0.7 }}>{targetedShelf.stock < targetedShelf.maxStock ? `[E] Auffüllen ($${targetedShelf.cost})` : "Vollständig besetzt ✨"}</div></div></div>
+          <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, 40px)", pointerEvents: "none" }}>
+            <div className="glass-panel" style={{ padding: "12px 20px", textAlign: "center", border: "1.5px solid var(--color-primary)", boxShadow: "0 0 15px rgba(20, 184, 166, 0.3)" }}>
+              <div style={{ fontWeight: 800, fontSize: "0.9rem" }}>{targetedShelf.label}</div>
+              <div style={{ fontSize: "0.75rem", opacity: 0.7 }}>
+                {targetedShelf.label.includes("[E]") 
+                  ? "" 
+                  : (targetedShelf.label.includes("Kasse") || targetedShelf.label.includes("PC") || targetedShelf.label.includes("Management-PC") || targetedShelf.label.includes("Lagerregal"))
+                    ? "[E] Interagieren"
+                    : (targetedShelf.stock < targetedShelf.maxStock ? `[E] Mit Kiste auffüllen` : "Vollständig besetzt ✨")
+                }
+              </div>
+            </div>
+          </div>
         )}
 
         {activePlacedItem && (
@@ -392,41 +524,64 @@ export const GameContainer: React.FC<{ onLeave: () => void }> = ({ onLeave }) =>
                     </div>
                     
                     <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginTop: "20px" }}>
-                      <button onClick={() => setPcTab("staff")} style={{ padding: "12px", background: pcTab === "staff" ? "#14b8a6" : "transparent", color: pcTab === "staff" ? "#000" : "#14b8a6", border: "1px solid #14b8a6", fontWeight: 800, cursor: "pointer", textAlign: "left", display: "flex", alignItems: "center", gap: "10px" }}><Briefcase size={16} /> PERSONAL</button>
-                      <button onClick={() => setPcTab("storage")} style={{ padding: "12px", background: pcTab === "storage" ? "#14b8a6" : "transparent", color: pcTab === "storage" ? "#000" : "#14b8a6", border: "1px solid #14b8a6", fontWeight: 800, cursor: "pointer", textAlign: "left", display: "flex", alignItems: "center", gap: "10px" }}><Warehouse size={16} /> LAGER / EINKAUF</button>
-                      <button onClick={() => setPcTab("marketing")} style={{ padding: "12px", background: pcTab === "marketing" ? "#14b8a6" : "transparent", color: pcTab === "marketing" ? "#000" : "#14b8a6", border: "1px solid #14b8a6", fontWeight: 800, cursor: "pointer", textAlign: "left", display: "flex", alignItems: "center", gap: "10px" }}><Megaphone size={16} /> MARKETING</button>
+                      <button onClick={() => { setPcTab("staff"); soundManager.playClick(); }} style={{ padding: "12px", background: pcTab === "staff" ? "#14b8a6" : "transparent", color: pcTab === "staff" ? "#000" : "#14b8a6", border: "1px solid #14b8a6", fontWeight: 800, cursor: "pointer", textAlign: "left", display: "flex", alignItems: "center", gap: "10px" }}><Briefcase size={16} /> PERSONAL</button>
+                      <button onClick={() => { setPcTab("storage"); soundManager.playClick(); }} style={{ padding: "12px", background: pcTab === "storage" ? "#14b8a6" : "transparent", color: pcTab === "storage" ? "#000" : "#14b8a6", border: "1px solid #14b8a6", fontWeight: 800, cursor: "pointer", textAlign: "left", display: "flex", alignItems: "center", gap: "10px" }}><ShoppingBasket size={16} /> GROSSHANDEL</button>
+                      <button onClick={() => { setPcTab("marketing"); soundManager.playClick(); }} style={{ padding: "12px", background: pcTab === "marketing" ? "#14b8a6" : "transparent", color: pcTab === "marketing" ? "#000" : "#14b8a6", border: "1px solid #14b8a6", fontWeight: 800, cursor: "pointer", textAlign: "left", display: "flex", alignItems: "center", gap: "10px" }}><Megaphone size={16} /> MARKETING</button>
                     </div>
-
-                    <button onClick={() => networkManager.sendHireEmployee()} className="btn-primary" style={{ marginTop: "auto", background: "#14b8a6", color: "#000", fontWeight: 800, width: "100%", height: "50px", border: "none" }}><Plus size={16} /> + RECRUIT_NEW</button>
                   </div>
-                  <div style={{ padding: "24px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "24px" }}>
+                  <div style={{ padding: "24px", overflowY: "hidden", display: "flex", flexDirection: "column", gap: "24px", minHeight: 0 }}>
                     {pcTab === "staff" && (
-                      <section><h3 style={{ color: "#14b8a6", fontSize: "0.9rem", borderBottom: "1px solid #1e293b", paddingBottom: "10px", marginBottom: "15px" }}><Briefcase size={18} /> [ PERSONNEL_DEPLOYMENT ]</h3><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "15px" }}>
-                          {employees.size === 0 ? <div style={{ gridColumn: "1/-1", padding: "60px", textAlign: "center", color: "#64748b", border: "1px dashed #1e293b", borderRadius: "12px" }}>NO_RECRUITS_ACTIVE</div> : Array.from(employees.values()).map(e => (
-                            <div key={e.id} style={{ background: "#0f172a", border: "1px solid #1e293b", padding: "15px", borderRadius: "10px" }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "15px" }}><div><div style={{ color: "#fff", fontWeight: 700 }}>{e.name.toUpperCase()}</div><div style={{ color: "#14b8a6", fontSize: "0.7rem" }}>SALARY: $50/MIN</div></div><div style={{ color: e.state === "working" ? "#10b981" : "#f59e0b", fontSize: "0.7rem", fontWeight: 800 }}>{e.state.toUpperCase()}</div></div>
-                              <div style={{ display: "flex", gap: "8px" }}><button onClick={() => networkManager.sendAssignTask(e.id, "register")} style={{ flex: 1, padding: "8px", fontSize: "0.7rem", cursor: "pointer", background: e.task === "register" ? "#14b8a6" : "#1e293b", color: e.task === "register" ? "#000" : "#fff", border: "none", borderRadius: "4px" }}>CASHIER</button><button onClick={() => networkManager.sendAssignTask(e.id, "stocking")} style={{ flex: 1, padding: "8px", fontSize: "0.7rem", cursor: "pointer", background: e.task === "stocking" ? "#14b8a6" : "#1e293b", color: e.task === "stocking" ? "#000" : "#fff", border: "none", borderRadius: "4px" }}>STOCKER</button><button onClick={() => networkManager.sendAssignTask(e.id, "none")} style={{ flex: 1, padding: "8px", fontSize: "0.7rem", cursor: "pointer", background: e.task === "none" ? "#14b8a6" : "#1e293b", color: e.task === "none" ? "#000" : "#fff", border: "none", borderRadius: "4px" }}>PAUSE</button></div></div>
-                          ))}
-                        </div></section>
+                      <section style={{ display: "flex", flexDirection: "column", minHeight: "100%", justifyContent: "space-between" }}>
+                        <div>
+                          <h3 style={{ color: "#14b8a6", fontSize: "0.9rem", borderBottom: "1px solid #1e293b", paddingBottom: "10px", marginBottom: "15px" }}><Briefcase size={18} /> [ PERSONNEL_DEPLOYMENT ]</h3>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "15px", marginBottom: "20px" }}>
+                            {employees.size === 0 ? <div style={{ gridColumn: "1/-1", padding: "60px", textAlign: "center", color: "#64748b", border: "1px dashed #1e293b", borderRadius: "12px" }}>NO_RECRUITS_ACTIVE</div> : Array.from(employees.values()).map(e => (
+                              <div key={e.id} style={{ background: "#0f172a", border: "1px solid #1e293b", padding: "15px", borderRadius: "10px" }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "15px" }}><div><div style={{ color: "#fff", fontWeight: 700 }}>{e.name.toUpperCase()}</div><div style={{ color: "#14b8a6", fontSize: "0.7rem" }}>SALARY: $15/MIN</div></div><div style={{ color: e.state === "working" ? "#10b981" : "#f59e0b", fontSize: "0.7rem", fontWeight: 800 }}>{e.state.toUpperCase()}</div></div>
+                                 <div style={{ display: "flex", gap: "8px" }}><button onClick={() => { networkManager.sendAssignTask(e.id, "register"); soundManager.playClick(); }} style={{ flex: 1, padding: "8px", fontSize: "0.7rem", cursor: "pointer", background: e.task === "register" ? "#14b8a6" : "#1e293b", color: e.task === "register" ? "#000" : "#fff", border: "none", borderRadius: "4px" }}>CASHIER</button><button onClick={() => { networkManager.sendAssignTask(e.id, "stocking"); soundManager.playClick(); }} style={{ flex: 1, padding: "8px", fontSize: "0.7rem", cursor: "pointer", background: e.task === "stocking" ? "#14b8a6" : "#1e293b", color: e.task === "stocking" ? "#000" : "#fff", border: "none", borderRadius: "4px" }}>STOCKER</button><button onClick={() => { networkManager.sendAssignTask(e.id, "none"); soundManager.playClick(); }} style={{ flex: 1, padding: "8px", fontSize: "0.7rem", cursor: "pointer", background: e.task === "none" ? "#14b8a6" : "#1e293b", color: e.task === "none" ? "#000" : "#fff", border: "none", borderRadius: "4px" }}>PAUSE</button></div></div>
+                            ))}
+                          </div>
+                        </div>
+                        
+                        <div style={{ marginTop: "auto", borderTop: "1px solid #1e293b", paddingTop: "20px" }}>
+                          <button onClick={() => { networkManager.sendHireEmployee(); soundManager.playClick(); }} className="btn-primary" style={{ background: "#14b8a6", color: "#000", fontWeight: 800, width: "100%", height: "50px", border: "none", borderRadius: "6px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "10px" }}><Plus size={16} /> + MITARBEITER ANWERBEN (Lohn: $15/Min)</button>
+                        </div>
+                      </section>
                     )}
 
                     {pcTab === "storage" && (
-                      <section>
-                        <h3 style={{ color: "#14b8a6", fontSize: "0.9rem", borderBottom: "1px solid #1e293b", paddingBottom: "10px", marginBottom: "15px" }}><Warehouse size={18} /> [ INVENTORY_WHOLSEALE ]</h3>
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "15px" }}>
-                          {products.map(p => (
+                      <section style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+                        <h3 style={{ color: "#14b8a6", fontSize: "0.9rem", borderBottom: "1px solid #1e293b", paddingBottom: "10px", marginBottom: "15px", flexShrink: 0 }}><ShoppingBasket size={18} /> [ DIRECT_DELIVERY_WHOLESALE ]</h3>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "15px", overflowY: "auto", flex: 1, paddingRight: "10px", paddingBottom: "20px" }}>
+                          {products.filter(p => p.category !== "weapon").map(p => (
                             <div key={p.id} style={{ background: "#0f172a", border: "1px solid #1e293b", padding: "15px", borderRadius: "10px", display: "flex", flexDirection: "column", gap: "10px" }}>
                               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                                 <span style={{ fontSize: "1.5rem" }}>{p.icon}</span>
                                 <div style={{ textAlign: "right" }}>
                                   <div style={{ color: "#fff", fontWeight: 700, fontSize: "0.8rem" }}>{p.name.toUpperCase()}</div>
-                                  <div style={{ color: "#14b8a6", fontSize: "0.7rem" }}>BESTAND: {inventory.get(p.id) || 0}</div>
+                                  <div style={{ color: "#14b8a6", fontSize: "0.7rem" }}>DIREKTLIEFERUNG</div>
                                 </div>
                               </div>
                               <div style={{ fontSize: "0.7rem", color: "#64748b" }}>Einkauf: ${p.price} | Verkauf: ${p.sellPrice}</div>
                               <div style={{ display: "flex", gap: "5px" }}>
-                                <button onClick={() => networkManager.sendBuyProduct(p.id, 10)} style={{ flex: 1, padding: "8px 4px", background: "#1e293b", color: "#14b8a6", border: "1px solid #14b8a6", borderRadius: "4px", fontSize: "0.7rem", cursor: "pointer" }}>+10 (${p.price * 10})</button>
-                                <button onClick={() => networkManager.sendBuyProduct(p.id, 50)} style={{ flex: 1, padding: "8px 4px", background: "#1e293b", color: "#14b8a6", border: "1px solid #14b8a6", borderRadius: "4px", fontSize: "0.7rem", cursor: "pointer" }}>+50 (${p.price * 50})</button>
+                                <button onClick={() => { networkManager.sendBuyProduct(p.id, 10); soundManager.playClick(); }} style={{ flex: 1, padding: "8px 4px", background: "#1e293b", color: "#14b8a6", border: "1px solid #14b8a6", borderRadius: "4px", fontSize: "0.7rem", cursor: "pointer" }}>+10 (${p.price * 10})</button>
+                                <button onClick={() => { networkManager.sendBuyProduct(p.id, 50); soundManager.playClick(); }} style={{ flex: 1, padding: "8px 4px", background: "#1e293b", color: "#14b8a6", border: "1px solid #14b8a6", borderRadius: "4px", fontSize: "0.7rem", cursor: "pointer" }}>+50 (${p.price * 50})</button>
                               </div>
+                            </div>
+                          ))}
+                        </div>
+                        
+                        <h3 style={{ color: "#ef4444", fontSize: "0.9rem", borderBottom: "1px solid #7f1d1d", paddingBottom: "10px", marginBottom: "15px", marginTop: "25px" }}>🔫 [ BLACK_MARKET_IMPORTS ]</h3>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: "15px" }}>
+                          {products.filter(p => p.category === "weapon").map(p => (
+                            <div key={p.id} style={{ background: "#1a0505", border: "1px solid #7f1d1d", padding: "20px", borderRadius: "10px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: "15px" }}>
+                                <span style={{ fontSize: "2rem" }}>{p.icon}</span>
+                                <div>
+                                  <div style={{ color: "#fff", fontWeight: 800, fontSize: "1rem" }}>{p.name}</div>
+                                  <div style={{ color: "#ef4444", fontSize: "0.7rem" }}>SCHWARZMARKT • Zum Einschüchtern von Kunden</div>
+                                </div>
+                              </div>
+                              <button onClick={() => { networkManager.sendBuyProduct(p.id, 1); soundManager.playClick(); }} style={{ padding: "12px 24px", background: "#7f1d1d", color: "#fff", border: "1px solid #ef4444", borderRadius: "6px", fontSize: "0.85rem", fontWeight: 800, cursor: "pointer" }}>KAUFEN (${p.price})</button>
                             </div>
                           ))}
                         </div>
@@ -434,7 +589,7 @@ export const GameContainer: React.FC<{ onLeave: () => void }> = ({ onLeave }) =>
                     )}
                     
                     {pcTab === "marketing" && (
-                      <section><h3 style={{ color: "#14b8a6", fontSize: "0.9rem", borderBottom: "1px solid #1e293b", paddingBottom: "10px", marginBottom: "15px" }}><Megaphone size={18} /> [ GROWTH_ENGINES ]</h3><div style={{ background: "#0f172a", border: "1px solid #1e293b", padding: "20px", borderRadius: "10px", display: "flex", justifyContent: "space-between", alignItems: "center" }}><div><div style={{ color: "#fff", fontWeight: 700, marginBottom: "5px" }}>TRAFFIC_MODUL_HYPER</div><div style={{ color: "#64748b", fontSize: "0.75rem" }}>TARGET: +100% VISITOR_FLOW // COST: $800</div></div>{marketingTimer > 0 ? <div style={{ padding: "10px 20px", border: "2px solid #14b8a6", color: "#14b8a6", fontWeight: 800 }}>ACTIVE: {Math.ceil(marketingTimer/20)}S</div> : <button onClick={() => networkManager.sendStartMarketing()} className="btn-primary" style={{ background: "#14b8a6", color: "#000", padding: "10px 20px", border: "none", fontWeight: 800 }}>RUN_CAMPAIGN</button>}</div></section>
+                      <section><h3 style={{ color: "#14b8a6", fontSize: "0.9rem", borderBottom: "1px solid #1e293b", paddingBottom: "10px", marginBottom: "15px" }}><Megaphone size={18} /> [ GROWTH_ENGINES ]</h3><div style={{ background: "#0f172a", border: "1px solid #1e293b", padding: "20px", borderRadius: "10px", display: "flex", justifyContent: "space-between", alignItems: "center" }}><div><div style={{ color: "#fff", fontWeight: 700, marginBottom: "5px" }}>TRAFFIC_MODUL_HYPER</div><div style={{ color: "#64748b", fontSize: "0.75rem" }}>TARGET: +100% VISITOR_FLOW // COST: $800</div></div>{marketingTimer > 0 ? <div style={{ padding: "10px 20px", border: "2px solid #14b8a6", color: "#14b8a6", fontWeight: 800 }}>ACTIVE: {Math.ceil(marketingTimer/20)}S</div> : <button onClick={() => { networkManager.sendStartMarketing(); soundManager.playClick(); }} className="btn-primary" style={{ background: "#14b8a6", color: "#000", padding: "10px 20px", border: "none", fontWeight: 800 }}>RUN_CAMPAIGN</button>}</div></section>
                     )}
                   </div></div></div>
             ) : (
@@ -459,30 +614,18 @@ export const GameContainer: React.FC<{ onLeave: () => void }> = ({ onLeave }) =>
                            <span style={{ fontSize: "1.5rem" }}>{products.find(p => p.id === activePlacedItem.productId)?.icon}</span>
                            <div>
                              <div style={{ fontSize: "0.8rem", fontWeight: 800 }}>{products.find(p => p.id === activePlacedItem.productId)?.name}</div>
-                             <div style={{ fontSize: "0.7rem", opacity: 0.7 }}>Im Lager verfügbar: {inventory.get(activePlacedItem.productId) || 0}</div>
+                             <div style={{ fontSize: "0.7rem", opacity: 0.7, color: "var(--color-primary)" }}>Bringe eine Kiste hierher zum Auffüllen! 📦</div>
                            </div>
                            <button 
                              onClick={() => networkManager.sendAssignProductToShelf(activePlacedItem.id, "")} 
                              style={{ marginLeft: "auto", background: "rgba(239, 68, 68, 0.1)", border: "1px solid var(--color-danger)", borderRadius: "4px", color: "var(--color-danger)", cursor: "pointer", padding: "4px" }}
-                             title="Produkt entfernen (Bestand wird ins Lager zurückgelegt)"
+                             title="Produkt-Zuweisung löschen (Inhalt geht verloren!)"
                            >
                              <X size={14} />
                            </button>
-                         </div>
-
+                           </div>
                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.8rem" }}><span>BESTAND:</span><strong>{activePlacedItem.stock} / {activePlacedItem.maxStock}</strong></div>
                          <div style={{ width: "100%", height: "8px", background: "rgba(255,255,255,0.1)", borderRadius: "4px" }}><div style={{ width: `${(activePlacedItem.stock/activePlacedItem.maxStock)*100}%`, height: "100%", background: "var(--color-primary)", borderRadius: "4px" }} /></div>
-                         
-                         {activePlacedItem.stock < activePlacedItem.maxStock && (
-                           <button 
-                             className="btn-primary" 
-                             disabled={(inventory.get(activePlacedItem.productId) || 0) <= 0}
-                             onClick={() => networkManager.sendRefillItem(selectedPlacedId!)} 
-                             style={{ width: "100%", justifyContent: "center", opacity: (inventory.get(activePlacedItem.productId) || 0) <= 0 ? 0.5 : 1 }}
-                           >
-                             {(inventory.get(activePlacedItem.productId) || 0) <= 0 ? "Kein Vorrat im Lager!" : "Aus Lager einräumen"}
-                           </button>
-                         )}
                        </>
                      )}
                    </div>

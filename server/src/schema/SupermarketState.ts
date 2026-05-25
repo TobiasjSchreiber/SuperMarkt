@@ -14,6 +14,7 @@ export class Player extends Schema {
   @type("string") color: string = "#3b82f6";
   @type("boolean") isFirstPerson: boolean = false;
   @type("string") holdingBoxId: string = ""; // ID of the box the player is carrying
+  @type("boolean") holdingAK47: boolean = false; // Whether the player is holding an AK-47
   @type("number") ping: number = 0;
 }
 
@@ -26,6 +27,7 @@ export class PlacedItem extends Schema {
   @type("number") rotation: number = 0; // 0, 1, 2, 3 (multiples of 90 degrees)
   @type("number") stock: number = 0;
   @type("number") maxStock: number = 0;
+  @type(["string"]) storedBoxIds = new ArraySchema<string>(); // IDs of delivery boxes stored on this item (for storage shelves)
 }
 
 export class Product extends Schema {
@@ -52,6 +54,7 @@ export class NPC extends Schema {
   @type("string") color: string = "#f43f5e";
   @type("string") activeIcon: string = "🛒";
   @type("number") browseTimer: number = 0;
+  @type("number") patience: number = 100; // Customer patience (decreases while waiting)
   @type("string") targetShelfId: string = "";
   @type("number") itemCount: number = 0;
   @type("string") message: string = "";
@@ -71,7 +74,8 @@ export class Employee extends Schema {
   @type("string") task: string = "none"; // 'none', 'register', 'stocking'
   @type("string") color: string = "#10b981";
   @type("number") workTimer: number = 0;
-  @type("number") salary: number = 50; // default salary per pay period
+  @type("number") salary: number = 15; // default salary per pay period
+  @type("string") holdingBoxId: string = ""; // ID of the box the employee is carrying
 }
 export class DeliveryBox extends Schema {
   @type("string") id: string = "";
@@ -87,7 +91,6 @@ export class SupermarketState extends Schema {
   @type({ map: PlacedItem }) placedItems = new MapSchema<PlacedItem>();
   @type({ map: NPC }) npcs = new MapSchema<NPC>();
   @type({ map: Employee }) employees = new MapSchema<Employee>();
-  @type({ map: "number" }) inventory = new MapSchema<number>(); // global inventory of items
   @type({ map: DeliveryBox }) deliveryBoxes = new MapSchema<DeliveryBox>();
 
   @type("number") budget: number = 5000; // starting money

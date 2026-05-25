@@ -24,14 +24,12 @@ class SupermarketRoom extends colyseus_1.Room {
             { id: "pizza", name: "Tiefkühlpizza", category: "shelf_frozen", price: 5, sellPrice: 12, icon: "🍕", color: "#fb923c" },
             { id: "icecream", name: "Eiscreme", category: "shelf_frozen", price: 6, sellPrice: 15, icon: "🍦", color: "#60a5fa" },
             { id: "frozen_veggies", name: "TK-Gemüse", category: "shelf_frozen", price: 4, sellPrice: 9, icon: "🥦", color: "#4ade80" },
+            { id: "ak47", name: "AK-47", category: "weapon", price: 800, sellPrice: 0, icon: "🔫", color: "#475569" },
         ];
     }
     onCreate(_options) {
         this.setState(new SupermarketState_1.SupermarketState());
         this.loadState();
-        if (this.state.inventory.size === 0) {
-            this.availableProducts.forEach(p => { this.state.inventory.set(p.id, 0); });
-        }
         this.npcInterval = setInterval(() => {
             this.tickNPCs();
             this.tickEmployees();
@@ -57,6 +55,13 @@ class SupermarketRoom extends colyseus_1.Room {
                 player.targetZ = data.z;
                 player.pathX.clear();
                 player.pathZ.clear();
+                if (player.holdingBoxId) {
+                    const box = this.state.deliveryBoxes.get(player.holdingBoxId);
+                    if (box) {
+                        box.x = player.x;
+                        box.z = player.z;
+                    }
+                }
             }
         });
         this.onMessage("moveTo", (client, data) => {
@@ -66,6 +71,53 @@ class SupermarketRoom extends colyseus_1.Room {
                 player.targetZ = data.z;
                 this.calculatePathGeneric(player);
             }
+        });
+        this.onMessage("pickUpBox", (client, data) => {
+            const player = this.state.players.get(client.sessionId);
+            const box = this.state.deliveryBoxes.get(data.boxId);
+            if (!player || !box || box.isHeld || player.holdingBoxId)
+                return;
+            if (player.holdingAK47)
+                return; // Can't pick up box while holding weapon
+            if (Math.sqrt(Math.pow(player.x - box.x, 2) + Math.pow(player.z - box.z, 2)) > 3.0)
+                return;
+            // If it's an AK-47 box, equip the weapon instead of carrying the box
+            if (box.productId === "ak47") {
+                player.holdingAK47 = true;
+                this.state.deliveryBoxes.delete(box.id);
+                this.broadcast("systemMessage", `${player.name} hat eine AK-47 aufgehoben! 🔫`);
+                return;
+            }
+            player.holdingBoxId = box.id;
+            box.isHeld = true;
+        });
+        this.onMessage("dropBox", (client) => {
+            const player = this.state.players.get(client.sessionId);
+            if (!player)
+                return;
+            // Drop AK-47 as a box
+            if (player.holdingAK47) {
+                const boxId = `box_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
+                const box = new SupermarketState_1.DeliveryBox();
+                box.id = boxId;
+                box.productId = "ak47";
+                box.amount = 1;
+                box.x = player.x + Math.sin(player.rotY) * 0.8;
+                box.z = player.z + Math.cos(player.rotY) * 0.8;
+                this.state.deliveryBoxes.set(boxId, box);
+                player.holdingAK47 = false;
+                this.broadcast("systemMessage", `${player.name} hat die AK-47 abgelegt.`);
+                return;
+            }
+            if (!player.holdingBoxId)
+                return;
+            const box = this.state.deliveryBoxes.get(player.holdingBoxId);
+            if (box) {
+                box.isHeld = false;
+                box.x = player.x + Math.sin(player.rotY) * 0.8;
+                box.z = player.z + Math.cos(player.rotY) * 0.8;
+            }
+            player.holdingBoxId = "";
         });
         this.onMessage("placeItem", (client, data) => {
             const maxBound = 9;
@@ -83,6 +135,9 @@ class SupermarketRoom extends colyseus_1.Room {
                     break;
                 case "shelf_frozen":
                     cost = 800;
+                    break;
+                case "storage_shelf":
+                    cost = 400;
                     break;
                 case "cash_register":
                     cost = 1200;
@@ -110,6 +165,11 @@ class SupermarketRoom extends colyseus_1.Room {
             item.gridX = data.gridX;
             item.gridZ = data.gridZ;
             item.rotation = data.rotation;
+            // Initialize slots for storage shelves
+            if (data.type === "storage_shelf") {
+                for (let i = 0; i < 8; i++)
+                    item.storedBoxIds.push("");
+            }
             let maxStock = 0;
             if (data.type === "shelf_groceries")
                 maxStock = 12;
@@ -143,17 +203,15 @@ class SupermarketRoom extends colyseus_1.Room {
             }
             this.state.budget -= totalCost;
             this.broadcast("moneyChange", { amount: -totalCost, type: "expense" });
-            // Spawn a delivery box at the entrance
             const boxId = `box_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
             const box = new SupermarketState_1.DeliveryBox();
             box.id = boxId;
             box.productId = data.productId;
             box.amount = data.amount;
-            // Scatter boxes slightly around entrance (0, 0, 9.5)
             box.x = (Math.random() - 0.5) * 4;
             box.z = 9.0 + Math.random();
             this.state.deliveryBoxes.set(boxId, box);
-            this.broadcast("systemMessage", `Lieferung eingetroffen: ${data.amount}x ${product.name}! 📦`);
+            this.broadcast("systemMessage", `Lieferung: ${data.amount}x ${product.name}! 📦`);
         });
         this.onMessage("unpackBox", (client, data) => {
             const box = this.state.deliveryBoxes.get(data.boxId);
@@ -162,21 +220,14 @@ class SupermarketRoom extends colyseus_1.Room {
             const product = this.availableProducts.find(p => p.id === box.productId);
             if (!product)
                 return;
-            const currentStock = this.state.inventory.get(box.productId) || 0;
-            this.state.inventory.set(box.productId, currentStock + box.amount);
             this.state.deliveryBoxes.delete(data.boxId);
-            this.broadcast("systemMessage", `${this.state.players.get(client.sessionId)?.name || "Jemand"} hat eine Kiste ${product.name} ausgepackt.`);
+            this.broadcast("systemMessage", `${this.state.players.get(client.sessionId)?.name || "Jemand"} hat eine Kiste entsorgt.`);
         });
         this.onMessage("assignProductToShelf", (client, data) => {
             const shelf = this.state.placedItems.get(data.shelfId);
             if (!shelf || !shelf.type.startsWith("shelf_"))
                 return;
-            // Handle clearing product
             if (data.productId === "") {
-                if (shelf.productId && shelf.stock > 0) {
-                    const currentInv = this.state.inventory.get(shelf.productId) || 0;
-                    this.state.inventory.set(shelf.productId, currentInv + shelf.stock);
-                }
                 shelf.productId = "";
                 shelf.stock = 0;
                 this.broadcast("systemMessage", `${this.state.players.get(client.sessionId)?.name || "Jemand"} hat ein Regal geleert.`);
@@ -185,18 +236,13 @@ class SupermarketRoom extends colyseus_1.Room {
             const product = this.availableProducts.find(p => p.id === data.productId);
             if (!product || product.category !== shelf.type)
                 return;
-            // If changing to a DIFFERENT product, return old stock first
             if (shelf.productId && shelf.productId !== data.productId && shelf.stock > 0) {
-                const currentInv = this.state.inventory.get(shelf.productId) || 0;
-                this.state.inventory.set(shelf.productId, currentInv + shelf.stock);
                 shelf.stock = 0;
             }
             shelf.productId = data.productId;
             this.broadcast("systemMessage", `${this.state.players.get(client.sessionId)?.name || "Jemand"} hat ${product.name} zugewiesen.`);
         });
         this.onMessage("hireEmployee", (client) => {
-            if (this.state.budget < 1500)
-                return;
             const id = `emp_${Date.now()}`;
             const emp = new SupermarketState_1.Employee();
             emp.id = id;
@@ -207,8 +253,6 @@ class SupermarketRoom extends colyseus_1.Room {
             emp.targetZ = 5;
             emp.state = "idle";
             this.state.employees.set(id, emp);
-            this.state.budget -= 1500;
-            this.broadcast("moneyChange", { amount: -1500, type: "expense" });
             this.broadcast("systemMessage", `Angestellter ${emp.name} eingestellt!`);
         });
         this.onMessage("assignTask", (_client, data) => {
@@ -225,17 +269,175 @@ class SupermarketRoom extends colyseus_1.Room {
                 this.broadcast("moneyChange", { amount: -800, type: "expense" });
             }
         });
+        this.onMessage("shoot", (client) => {
+            const player = this.state.players.get(client.sessionId);
+            if (!player || !player.holdingAK47)
+                return;
+            // 2D raycast from player position along facing direction
+            const dirX = Math.sin(player.rotY);
+            const dirZ = Math.cos(player.rotY);
+            let closestNpc = null;
+            let closestDist = 15; // max range
+            this.state.npcs.forEach((npc) => {
+                if (npc.state === "leaving")
+                    return; // already fleeing
+                const toX = npc.x - player.x;
+                const toZ = npc.z - player.z;
+                const along = toX * dirX + toZ * dirZ; // dot product (distance along ray)
+                if (along < 0.3 || along > closestDist)
+                    return; // behind or too far
+                const perpX = toX - dirX * along;
+                const perpZ = toZ - dirZ * along;
+                const perp = Math.sqrt(perpX * perpX + perpZ * perpZ); // perpendicular distance
+                if (perp < 0.8 && along < closestDist) {
+                    closestDist = along;
+                    closestNpc = npc;
+                }
+            });
+            if (closestNpc) {
+                const npc = closestNpc;
+                // Drop items as a delivery box at the NPC's location
+                if (npc.itemCount > 0) {
+                    const product = this.availableProducts.find(p => p.icon === npc.activeIcon);
+                    const boxId = `box_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
+                    const droppedBox = new SupermarketState_1.DeliveryBox();
+                    droppedBox.id = boxId;
+                    droppedBox.productId = product ? product.id : "bread";
+                    droppedBox.amount = npc.itemCount;
+                    droppedBox.x = npc.x;
+                    droppedBox.z = npc.z;
+                    this.state.deliveryBoxes.set(boxId, droppedBox);
+                    this.broadcast("chatMessage", { type: "system", message: `💥 ${npc.name || "Ein Kunde"} hat ${npc.itemCount} Artikel fallen gelassen!`, timestamp: Date.now() });
+                    npc.itemCount = 0;
+                }
+                // NPC flees
+                npc.state = "leaving";
+                npc.targetX = (Math.random() - 0.5) * 6;
+                npc.targetZ = 9.5;
+                npc.activeIcon = "😱";
+                npc.message = "AAAAAAH! HILFE! 😱";
+                this.calculatePathGeneric(npc);
+            }
+            // Broadcast gunshot event to all clients for sound/effects
+            this.broadcast("gunshot", { x: player.x, z: player.z, rotY: player.rotY });
+        });
         this.onMessage("refillItem", (client, data) => {
+            const player = this.state.players.get(client.sessionId);
             const item = this.state.placedItems.get(data.id);
-            if (!item || !item.type.startsWith("shelf_") || !item.productId || item.stock >= item.maxStock)
+            if (!player || !item)
                 return;
-            const invStock = this.state.inventory.get(item.productId) || 0;
-            if (invStock <= 0)
+            // --- LOGIC FOR STORAGE SHELVES ---
+            if (item.type === "storage_shelf") {
+                const isSlotOccupied = (idx) => {
+                    const bid = item.storedBoxIds[idx];
+                    return !!(bid && this.state.deliveryBoxes.has(bid));
+                };
+                let slot = -1;
+                if (data.slotIndex !== undefined) {
+                    slot = data.slotIndex;
+                }
+                else {
+                    for (let i = 0; i < 8; i++) {
+                        if (!isSlotOccupied(i)) {
+                            slot = i;
+                            break;
+                        }
+                    }
+                }
+                if (slot === -1 || slot >= 8) {
+                    if (player.holdingBoxId)
+                        client.send("error", { message: "Kein freier Platz im Regal!" });
+                    return;
+                }
+                // A. If holding a box, PUT IT IN THE SPECIFIC SLOT
+                if (player.holdingBoxId) {
+                    if (isSlotOccupied(slot)) {
+                        // Find next empty slot if specific one is full (fallback)
+                        let fallbackSlot = -1;
+                        for (let i = 0; i < 8; i++) {
+                            if (!isSlotOccupied(i)) {
+                                fallbackSlot = i;
+                                break;
+                            }
+                        }
+                        if (fallbackSlot === -1) {
+                            client.send("error", { message: "Regal voll!" });
+                            return;
+                        }
+                        this.putBoxInSlot(player, item, fallbackSlot);
+                    }
+                    else {
+                        this.putBoxInSlot(player, item, slot);
+                    }
+                }
+                // B. If NOT holding a box, TAKE FROM THE SPECIFIC SLOT
+                else {
+                    let actualSlot = -1;
+                    if (data.slotIndex !== undefined && isSlotOccupied(data.slotIndex)) {
+                        actualSlot = data.slotIndex;
+                    }
+                    else {
+                        for (let i = 7; i >= 0; i--) {
+                            if (isSlotOccupied(i)) {
+                                actualSlot = i;
+                                break;
+                            }
+                        }
+                    }
+                    if (actualSlot !== -1) {
+                        const boxId = item.storedBoxIds[actualSlot];
+                        if (boxId) {
+                            const box = this.state.deliveryBoxes.get(boxId);
+                            if (box) {
+                                player.holdingBoxId = boxId;
+                                box.isHeld = true;
+                                item.storedBoxIds[actualSlot] = "";
+                                this.broadcast("systemMessage", `${player.name} hat eine Kiste geholt.`);
+                            }
+                            else {
+                                // Clear the ghost ID so the slot is cleanly marked empty
+                                item.storedBoxIds[actualSlot] = "";
+                            }
+                        }
+                    }
+                }
                 return;
-            const toAdd = Math.min(item.maxStock - item.stock, invStock);
-            item.stock += toAdd;
-            this.state.inventory.set(item.productId, invStock - toAdd);
-            this.state.storeExp += Math.round(toAdd * 10);
+            }
+            // --- LOGIC FOR SALES SHELVES ---
+            if (!item.type.startsWith("shelf_") || item.stock >= item.maxStock)
+                return;
+            if (player.holdingBoxId) {
+                const box = this.state.deliveryBoxes.get(player.holdingBoxId);
+                if (!box)
+                    return;
+                const product = this.availableProducts.find(p => p.id === box.productId);
+                if (!product)
+                    return;
+                if ((!item.productId || item.stock === 0) && product.category === item.type) {
+                    if (item.productId !== box.productId) {
+                        item.productId = box.productId;
+                        this.broadcast("systemMessage", `${player.name} hat ein Regal mit ${product.name} belegt.`);
+                    }
+                }
+                if (box.productId === item.productId) {
+                    const toAdd = Math.min(item.maxStock - item.stock, box.amount);
+                    item.stock += toAdd;
+                    box.amount -= toAdd;
+                    if (box.amount <= 0) {
+                        this.state.deliveryBoxes.delete(box.id);
+                        player.holdingBoxId = "";
+                    }
+                    this.state.storeExp += Math.round(toAdd * 10);
+                    this.broadcast("moneyChange", { amount: 0, type: "income" });
+                    return;
+                }
+                else {
+                    client.send("error", { message: "Falsches Produkt in der Kiste!" });
+                }
+            }
+            else {
+                client.send("error", { message: "Du musst eine Kiste in der Hand halten!" });
+            }
         });
         this.onMessage("processPayment", (_client, data) => {
             const npc = this.state.npcs.get(data.npcId);
@@ -265,6 +467,19 @@ class SupermarketRoom extends colyseus_1.Room {
             let refund = 150;
             if (item.type === "cash_register")
                 refund = 600;
+            else if (item.type === "storage_shelf")
+                refund = 200;
+            else if (item.type === "shelf_produce")
+                refund = 250;
+            else if (item.type === "shelf_frozen")
+                refund = 400;
+            // If it's a storage shelf, remove the boxes too
+            if (item.type === "storage_shelf") {
+                item.storedBoxIds.forEach(boxId => {
+                    if (boxId && boxId !== "")
+                        this.state.deliveryBoxes.delete(boxId);
+                });
+            }
             this.state.placedItems.delete(data.id);
             this.state.budget += refund;
             this.broadcast("moneyChange", { amount: refund, type: "income" });
@@ -312,21 +527,112 @@ class SupermarketRoom extends colyseus_1.Room {
                         this.state.placedItems.forEach(item => { if (item.type === "cash_register")
                             registers.push(item); });
                         if (registers.length > 0) {
-                            emp.targetX = registers[0].gridX - 0.5;
+                            emp.targetX = registers[0].gridX - 0.65;
                             emp.targetZ = registers[0].gridZ;
                             emp.state = "walking";
                             this.calculatePathGeneric(emp);
                         }
                     }
                     else if (emp.task === "stocking") {
-                        let targetShelf;
-                        this.state.placedItems.forEach(item => { if (item.type.startsWith("shelf_") && item.productId && item.stock < item.maxStock && (this.state.inventory.get(item.productId) || 0) > 0)
-                            targetShelf = item; });
-                        if (targetShelf) {
-                            emp.targetX = targetShelf.gridX;
-                            emp.targetZ = targetShelf.gridZ + 0.8;
-                            emp.state = "walking";
-                            this.calculatePathGeneric(emp);
+                        const empAny = emp;
+                        if (!emp.holdingBoxId) {
+                            // Look for shelves that need stocking
+                            const candidateShelves = Array.from(this.state.placedItems.values()).filter(item => item.type.startsWith("shelf_") && item.productId && item.stock < item.maxStock);
+                            if (candidateShelves.length > 0) {
+                                // Find a matching box (not held, has stock)
+                                let foundBox;
+                                let targetShelf;
+                                for (const shelf of candidateShelves) {
+                                    foundBox = Array.from(this.state.deliveryBoxes.values()).find(b => !b.isHeld && b.amount > 0 && b.productId === shelf.productId);
+                                    if (foundBox) {
+                                        targetShelf = shelf;
+                                        break;
+                                    }
+                                }
+                                if (foundBox && targetShelf) {
+                                    // Check if stored in a shelf
+                                    let storageShelf;
+                                    let slotIndex = -1;
+                                    this.state.placedItems.forEach(item => {
+                                        if (item.type === "storage_shelf" && item.storedBoxIds) {
+                                            const idx = item.storedBoxIds.indexOf(foundBox.id);
+                                            if (idx !== -1) {
+                                                storageShelf = item;
+                                                slotIndex = idx;
+                                            }
+                                        }
+                                    });
+                                    empAny.targetBoxId = foundBox.id;
+                                    empAny.targetShelfId = targetShelf.id;
+                                    if (storageShelf) {
+                                        emp.targetX = storageShelf.gridX;
+                                        emp.targetZ = storageShelf.gridZ + 0.8;
+                                        empAny.targetStorageShelfId = storageShelf.id;
+                                        empAny.targetSlotIndex = slotIndex;
+                                    }
+                                    else {
+                                        emp.targetX = foundBox.x;
+                                        emp.targetZ = foundBox.z;
+                                        empAny.targetStorageShelfId = undefined;
+                                        empAny.targetSlotIndex = undefined;
+                                    }
+                                    empAny.subState = "pickup_box";
+                                    emp.state = "walking";
+                                    this.calculatePathGeneric(emp);
+                                }
+                            }
+                        }
+                        else {
+                            // Holding a box, find where to put the items
+                            const box = this.state.deliveryBoxes.get(emp.holdingBoxId);
+                            if (!box || box.amount <= 0) {
+                                emp.holdingBoxId = "";
+                                return;
+                            }
+                            const shelf = Array.from(this.state.placedItems.values()).find(item => item.type.startsWith("shelf_") && item.productId === box.productId && item.stock < item.maxStock);
+                            if (shelf) {
+                                emp.targetX = shelf.gridX;
+                                emp.targetZ = shelf.gridZ + 0.8;
+                                empAny.targetShelfId = shelf.id;
+                                empAny.subState = "refill_shelf";
+                                emp.state = "walking";
+                                this.calculatePathGeneric(emp);
+                            }
+                            else {
+                                // Shelf is full or doesn't exist, try to put box back in storage
+                                let targetStorageShelf;
+                                let emptySlot = -1;
+                                for (const item of this.state.placedItems.values()) {
+                                    if (item.type === "storage_shelf") {
+                                        for (let idx = 0; idx < 8; idx++) {
+                                            const bid = item.storedBoxIds[idx];
+                                            const boxExists = bid && this.state.deliveryBoxes.has(bid);
+                                            if (!boxExists) {
+                                                targetStorageShelf = item;
+                                                emptySlot = idx;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if (targetStorageShelf)
+                                        break;
+                                }
+                                if (targetStorageShelf) {
+                                    emp.targetX = targetStorageShelf.gridX;
+                                    emp.targetZ = targetStorageShelf.gridZ + 0.8;
+                                    empAny.targetStorageShelfId = targetStorageShelf.id;
+                                    empAny.targetSlotIndex = emptySlot;
+                                    empAny.subState = "store_box";
+                                }
+                                else {
+                                    // No storage slots, drop on floor near store center
+                                    emp.targetX = 0;
+                                    emp.targetZ = 5;
+                                    empAny.subState = "drop_box";
+                                }
+                                emp.state = "walking";
+                                this.calculatePathGeneric(emp);
+                            }
                         }
                     }
                     break;
@@ -334,14 +640,16 @@ class SupermarketRoom extends colyseus_1.Room {
                 case "walking": {
                     if (this.followPath(emp, step)) {
                         emp.state = "working";
-                        emp.workTimer = 40;
+                        emp.workTimer = 20;
                     }
                     break;
                 }
                 case "working": {
                     emp.workTimer--;
                     if (emp.workTimer <= 0) {
+                        const empAny = emp;
                         if (emp.task === "register") {
+                            emp.rotY = Math.PI / 2;
                             let found = false;
                             this.state.npcs.forEach(npc => {
                                 if (npc.state === "waiting_to_pay" && !found) {
@@ -354,24 +662,81 @@ class SupermarketRoom extends colyseus_1.Room {
                             emp.workTimer = found ? 40 : 20;
                         }
                         else if (emp.task === "stocking") {
-                            const shelf = Array.from(this.state.placedItems.values()).find(i => Math.round(i.gridX) === Math.round(emp.targetX) && Math.round(i.gridZ) === Math.round(emp.targetZ - 0.8));
-                            if (shelf && shelf.productId && shelf.stock < shelf.maxStock) {
-                                const inv = this.state.inventory.get(shelf.productId) || 0;
-                                if (inv > 0) {
-                                    const add = Math.min(shelf.maxStock - shelf.stock, inv);
-                                    shelf.stock += add;
-                                    this.state.inventory.set(shelf.productId, inv - add);
+                            const subState = empAny.subState;
+                            if (subState === "pickup_box") {
+                                const box = this.state.deliveryBoxes.get(empAny.targetBoxId);
+                                if (box && !box.isHeld) {
+                                    box.isHeld = true;
+                                    emp.holdingBoxId = box.id;
+                                    if (empAny.targetStorageShelfId && empAny.targetSlotIndex !== undefined) {
+                                        const shelf = this.state.placedItems.get(empAny.targetStorageShelfId);
+                                        if (shelf)
+                                            shelf.storedBoxIds[empAny.targetSlotIndex] = "";
+                                    }
+                                }
+                            }
+                            else if (subState === "refill_shelf") {
+                                const box = this.state.deliveryBoxes.get(emp.holdingBoxId);
+                                const shelf = this.state.placedItems.get(empAny.targetShelfId);
+                                if (box && shelf && box.productId === shelf.productId) {
+                                    const add = Math.min(shelf.maxStock - shelf.stock, box.amount);
+                                    if (add > 0) {
+                                        shelf.stock += add;
+                                        box.amount -= add;
+                                    }
+                                    if (box.amount <= 0) {
+                                        this.state.deliveryBoxes.delete(box.id);
+                                        emp.holdingBoxId = "";
+                                    }
+                                }
+                            }
+                            else if (subState === "store_box") {
+                                const box = this.state.deliveryBoxes.get(emp.holdingBoxId);
+                                const shelf = this.state.placedItems.get(empAny.targetStorageShelfId);
+                                if (box && shelf && empAny.targetSlotIndex !== undefined) {
+                                    box.isHeld = false;
+                                    const slot = empAny.targetSlotIndex;
+                                    const level = Math.floor(slot / 2);
+                                    const side = slot % 2;
+                                    box.x = shelf.gridX + (side * 0.4 - 0.2);
+                                    box.z = shelf.gridZ;
+                                    shelf.storedBoxIds[slot] = box.id;
+                                    emp.holdingBoxId = "";
+                                }
+                            }
+                            else if (subState === "drop_box") {
+                                const box = this.state.deliveryBoxes.get(emp.holdingBoxId);
+                                if (box) {
+                                    box.isHeld = false;
+                                    box.x = emp.x;
+                                    box.z = emp.z;
+                                    emp.holdingBoxId = "";
                                 }
                             }
                             emp.state = "idle";
                         }
-                        else
+                        else {
                             emp.state = "idle";
+                        }
                     }
                     break;
                 }
             }
         });
+    }
+    putBoxInSlot(player, item, slot) {
+        const boxId = player.holdingBoxId;
+        const box = this.state.deliveryBoxes.get(boxId);
+        if (box) {
+            box.isHeld = false;
+            const level = Math.floor(slot / 2);
+            const side = slot % 2;
+            box.x = item.gridX + (side * 0.4 - 0.2);
+            box.z = item.gridZ;
+            item.storedBoxIds[slot] = box.id;
+            player.holdingBoxId = "";
+            this.broadcast("systemMessage", `${player.name} hat eine Kiste eingeräumt.`);
+        }
     }
     processNPCShopPayment(npc) {
         let price = 10;
@@ -384,7 +749,7 @@ class SupermarketRoom extends colyseus_1.Room {
         const profit = npc.itemCount * price;
         this.state.budget += profit;
         this.state.storeExp += Math.round(profit * 0.2);
-        npc.targetX = 0;
+        npc.targetX = (Math.random() - 0.5) * 6;
         npc.targetZ = 9.5;
         npc.state = "leaving";
         npc.activeIcon = "👋";
@@ -393,22 +758,18 @@ class SupermarketRoom extends colyseus_1.Room {
         this.broadcast("chatMessage", { type: "income", message: `${npc.name} hat $${profit} bezahlt.`, timestamp: Date.now() });
     }
     tickNPCs() {
-        const npcNames = ["Oma Erna", "Herr Schmidt", "Frau Müller", "Gamer Tim", "Lisa", "Klaus-Dieter", "Marie", "Bastian", "Dr. Krause", "Melanie", "Opa Heinz", "Sabine", "Felix", "Anna", "Uwe"];
-        const npcColors = ["#f43f5e", "#db2777", "#ec4899", "#d946ef", "#8b5cf6", "#06b6d4", "#0ea5e9", "#f59e0b", "#f97316"];
         const maxNPCs = Math.min(8, 2 + this.state.storeLevel);
         const spawnProb = this.state.marketingTimer > 0 ? 0.12 : 0.06;
         if (this.state.npcs.size < maxNPCs && Math.random() < spawnProb) {
             const id = `npc_${Date.now()}`;
             const npc = new SupermarketState_1.NPC();
             npc.id = id;
-            npc.name = npcNames[Math.floor(Math.random() * npcNames.length)];
-            npc.color = npcColors[Math.floor(Math.random() * npcColors.length)];
-            npc.x = 0;
+            const spawnX = (Math.random() - 0.5) * 6;
+            npc.x = spawnX;
             npc.z = 9.5;
-            npc.targetX = 0;
+            npc.targetX = spawnX;
             npc.targetZ = 9.5;
             npc.state = "idle";
-            npc.activeIcon = "🛒";
             this.state.npcs.set(id, npc);
         }
         const step = 0.0875;
@@ -465,16 +826,23 @@ class SupermarketRoom extends colyseus_1.Room {
                             regs.push(i); });
                         if (npc.itemCount > 0 && regs.length > 0) {
                             const r = regs[Math.floor(Math.random() * regs.length)];
-                            npc.targetX = r.gridX + 0.8;
+                            npc.targetX = r.gridX + 0.65;
                             npc.targetZ = r.gridZ;
                             npc.state = "walking_to_register";
                             npc.activeIcon = "💳";
                         }
                         else {
-                            npc.targetX = 0;
+                            npc.targetX = (Math.random() - 0.5) * 6;
                             npc.targetZ = 9.5;
                             npc.state = "leaving";
-                            npc.activeIcon = "👋";
+                            npc.activeIcon = "🤬";
+                            if (npc.itemCount > 0) {
+                                npc.message = "Wo ist hier bitteschön die Kasse?! Ich geh dann mal... 🙄";
+                                this.broadcast("chatMessage", { type: "error", message: `${npc.name} ist gegangen, weil keine Kasse existiert!`, timestamp: Date.now() });
+                            }
+                            else {
+                                npc.activeIcon = "👋";
+                            }
                         }
                         this.calculatePathGeneric(npc);
                     }
@@ -484,6 +852,22 @@ class SupermarketRoom extends colyseus_1.Room {
                     if (this.followPath(npc, step)) {
                         npc.state = "waiting_to_pay";
                         npc.activeIcon = "💰";
+                        npc.rotY = -Math.PI / 2;
+                        npc.patience = 600 + Math.random() * 400;
+                    }
+                    break;
+                }
+                case "waiting_to_pay": {
+                    npc.patience--;
+                    if (npc.patience <= 0) {
+                        // NPC is too angry and leaves without paying!
+                        npc.state = "leaving";
+                        npc.targetX = (Math.random() - 0.5) * 6;
+                        npc.targetZ = 9.5;
+                        npc.activeIcon = "🤬";
+                        npc.message = "Das dauert mir hier zu lange! Ich gehe! 🤬";
+                        this.calculatePathGeneric(npc);
+                        this.broadcast("chatMessage", { type: "error", message: `${npc.name} ist wütend gegangen (zu lange Wartezeit an der Kasse)!`, timestamp: Date.now() });
                     }
                     break;
                 }
@@ -499,11 +883,34 @@ class SupermarketRoom extends colyseus_1.Room {
                 const dx = npc.x - o.x;
                 const dz = npc.z - o.z;
                 const d = Math.sqrt(dx * dx + dz * dz);
-                if (d < 0.6 && d > 0.01) {
-                    npc.x += (dx / d) * 0.02;
-                    npc.z += (dz / d) * 0.02;
+                if (d < 0.65) {
+                    if (d > 0.01) {
+                        const push = (0.65 - d) * 0.15;
+                        npc.x += (dx / d) * push + (Math.random() - 0.5) * 0.04;
+                        npc.z += (dz / d) * push + (Math.random() - 0.5) * 0.04;
+                    }
+                    else {
+                        // Exactly overlapping, push apart randomly
+                        npc.x += (Math.random() - 0.5) * 0.2;
+                        npc.z += (Math.random() - 0.5) * 0.2;
+                    }
                 }
             });
+            const npcRadius = 0.35;
+            const itemSize = 0.5;
+            const minDist = npcRadius + itemSize;
+            this.state.placedItems.forEach((i) => {
+                const dx = npc.x - i.gridX;
+                const dz = npc.z - i.gridZ;
+                const d = Math.sqrt(dx * dx + dz * dz);
+                if (d < minDist && d > 0.01) {
+                    const push = (minDist - d) * 0.5;
+                    npc.x += (dx / d) * push;
+                    npc.z += (dz / d) * push;
+                }
+            });
+            npc.x = Math.max(-9.5, Math.min(9.5, npc.x));
+            npc.z = Math.max(-9.5, Math.min(9.5, npc.z));
         });
     }
     followPath(entity, step) {
@@ -513,23 +920,28 @@ class SupermarketRoom extends colyseus_1.Room {
             const dx = nx - entity.x;
             const dz = nz - entity.z;
             const d = Math.sqrt(dx * dx + dz * dz);
-            if (d > 0.1) {
+            if (d > 0.15) {
                 entity.x += (dx / d) * step;
                 entity.z += (dz / d) * step;
+                if (d > 0.2)
+                    entity.rotY = Math.atan2(dx, dz);
                 return false;
             }
             entity.x = nx;
             entity.z = nz;
             entity.pathX.shift();
             entity.pathZ.shift();
-            return entity.pathX.length === 0 && Math.sqrt(Math.pow(entity.targetX - entity.x, 2) + Math.pow(entity.targetZ - entity.z, 2)) < 0.2;
+            // Use 0.5 as arrival threshold to prevent clumping on the exact same coordinate
+            return entity.pathX.length === 0 && Math.sqrt(Math.pow(entity.targetX - entity.x, 2) + Math.pow(entity.targetZ - entity.z, 2)) < 0.5;
         }
         const dx = entity.targetX - entity.x;
         const dz = entity.targetZ - entity.z;
         const d = Math.sqrt(dx * dx + dz * dz);
-        if (d > 0.1) {
+        if (d > 0.15) {
             entity.x += (dx / d) * step;
             entity.z += (dz / d) * step;
+            if (d > 0.2)
+                entity.rotY = Math.atan2(dx, dz);
             return false;
         }
         entity.x = entity.targetX;
@@ -561,36 +973,40 @@ class SupermarketRoom extends colyseus_1.Room {
             if (p.isFirstPerson)
                 return;
             this.followPath(p, step);
-            if (p.pathX.length > 0) {
-                const dx = p.pathX[0] - p.x;
-                const dz = p.pathZ[0] - p.z;
-                if (Math.sqrt(dx * dx + dz * dz) > 0.05)
-                    p.rotY = Math.atan2(dx, dz);
-            }
-            else {
-                const dx = p.targetX - p.x;
-                const dz = p.targetZ - p.z;
-                if (Math.sqrt(dx * dx + dz * dz) > 0.1)
-                    p.rotY = Math.atan2(dx, dz);
-            }
+            const playerRadius = 0.4;
+            const itemSize = 0.5;
+            const minDist = playerRadius + itemSize;
             this.state.placedItems.forEach((i) => {
                 const dx = p.x - i.gridX;
                 const dz = p.z - i.gridZ;
                 const d = Math.sqrt(dx * dx + dz * dz);
-                if (d < 0.9) {
-                    const o = 0.9 - d;
-                    p.x += (dx / d) * o;
-                    p.z += (dz / d) * o;
+                if (d < minDist && d > 0.01) {
+                    const push = (minDist - d) * 0.4;
+                    p.x += (dx / d) * push;
+                    p.z += (dz / d) * push;
                 }
             });
             p.x = Math.max(-9.8, Math.min(9.8, p.x));
             p.z = Math.max(-9.8, Math.min(9.8, p.z));
         });
     }
+    isCellBlocked(x, z, ex, ez) {
+        if (Math.abs(x) > 9 || Math.abs(z) > 9)
+            return true;
+        if (x === ex && z === ez)
+            return false;
+        let blocked = false;
+        this.state.placedItems.forEach(i => {
+            if (Math.round(i.gridX) === x && Math.round(i.gridZ) === z)
+                blocked = true;
+        });
+        return blocked;
+    }
     findAStarPath(sx, sz, ex, ez) {
         const open = [];
         const closed = new Set();
-        open.push({ x: sx, z: sz, g: 0, h: Math.abs(sx - ex) + Math.abs(sz - ez), p: null });
+        const startH = Math.sqrt(Math.pow(sx - ex, 2) + Math.pow(sz - ez, 2));
+        open.push({ x: sx, z: sz, g: 0, h: startH, p: null });
         while (open.length > 0) {
             open.sort((a, b) => (a.g + a.h) - (b.g + b.h));
             const curr = open.shift();
@@ -607,16 +1023,32 @@ class SupermarketRoom extends colyseus_1.Room {
             if (closed.has(k))
                 continue;
             closed.add(k);
-            for (const n of [{ x: curr.x + 1, z: curr.z }, { x: curr.x - 1, z: curr.z }, { x: curr.x, z: curr.z + 1 }, { x: curr.x, z: curr.z - 1 }]) {
-                if (Math.abs(n.x) > 9 || Math.abs(n.z) > 9 || closed.has(`${n.x},${n.z}`))
+            const neighbors = [
+                // Cardinal neighbors
+                { x: curr.x + 1, z: curr.z, dx: 1, dz: 0, cost: 1.0 },
+                { x: curr.x - 1, z: curr.z, dx: -1, dz: 0, cost: 1.0 },
+                { x: curr.x, z: curr.z + 1, dx: 0, dz: 1, cost: 1.0 },
+                { x: curr.x, z: curr.z - 1, dx: 0, dz: -1, cost: 1.0 },
+                // Diagonal neighbors
+                { x: curr.x + 1, z: curr.z + 1, dx: 1, dz: 1, cost: Math.SQRT2 },
+                { x: curr.x + 1, z: curr.z - 1, dx: 1, dz: -1, cost: Math.SQRT2 },
+                { x: curr.x - 1, z: curr.z + 1, dx: -1, dz: 1, cost: Math.SQRT2 },
+                { x: curr.x - 1, z: curr.z - 1, dx: -1, dz: -1, cost: Math.SQRT2 }
+            ];
+            for (const n of neighbors) {
+                if (closed.has(`${n.x},${n.z}`))
                     continue;
-                let block = false;
-                this.state.placedItems.forEach(i => { if (Math.round(i.gridX) === n.x && Math.round(i.gridZ) === n.z)
-                    block = true; });
-                if (block && !(n.x === ex && n.z === ez))
+                if (this.isCellBlocked(n.x, n.z, ex, ez))
                     continue;
-                const g = curr.g + 1;
-                const h = Math.abs(n.x - ex) + Math.abs(n.z - ez);
+                // Prevent corner-cutting: if moving diagonally, cardinally adjacent neighbors must be unblocked
+                if (n.dx !== 0 && n.dz !== 0) {
+                    if (this.isCellBlocked(curr.x + n.dx, curr.z, ex, ez) ||
+                        this.isCellBlocked(curr.x, curr.z + n.dz, ex, ez)) {
+                        continue;
+                    }
+                }
+                const g = curr.g + n.cost;
+                const h = Math.sqrt(Math.pow(n.x - ex, 2) + Math.pow(n.z - ez, 2));
                 const exist = open.find(o => o.x === n.x && o.z === n.z);
                 if (exist) {
                     if (g < exist.g) {
@@ -624,19 +1056,28 @@ class SupermarketRoom extends colyseus_1.Room {
                         exist.p = curr;
                     }
                 }
-                else
+                else {
                     open.push({ x: n.x, z: n.z, g, h, p: curr });
+                }
             }
         }
         return null;
     }
     saveState() {
         try {
-            const d = { budget: this.state.budget, storeName: this.state.storeName, storeLevel: this.state.storeLevel, storeExp: this.state.storeExp, inventory: {}, placedItems: [], employees: [], deliveryBoxes: [] };
-            this.state.inventory.forEach((v, k) => { d.inventory[k] = v; });
-            this.state.placedItems.forEach((i) => { d.placedItems.push({ id: i.id, type: i.type, productId: i.productId, gridX: i.gridX, gridZ: i.gridZ, rotation: i.rotation, stock: i.stock, maxStock: i.maxStock }); });
-            this.state.employees.forEach((e) => { d.employees.push({ id: e.id, name: e.name, color: e.color, salary: e.salary, task: e.task }); });
-            this.state.deliveryBoxes.forEach((b) => { d.deliveryBoxes.push({ id: b.id, productId: b.productId, amount: b.amount, x: b.x, z: b.z }); });
+            const d = { budget: this.state.budget, storeName: this.state.storeName, storeLevel: this.state.storeLevel, storeExp: this.state.storeExp, placedItems: [], employees: [], deliveryBoxes: [] };
+            this.state.placedItems.forEach((i) => {
+                const storedBoxIdsArray = [];
+                i.storedBoxIds.forEach(id => storedBoxIdsArray.push(id));
+                d.placedItems.push({
+                    id: i.id, type: i.type, productId: i.productId,
+                    gridX: i.gridX, gridZ: i.gridZ, rotation: i.rotation,
+                    stock: i.stock, maxStock: i.maxStock,
+                    storedBoxIds: storedBoxIdsArray
+                });
+            });
+            this.state.employees.forEach((e) => { d.employees.push({ id: e.id, name: e.name, color: e.color, salary: e.salary, task: e.task, holdingBoxId: e.holdingBoxId }); });
+            this.state.deliveryBoxes.forEach((b) => { d.deliveryBoxes.push({ id: b.id, productId: b.productId, amount: b.amount, x: b.x, z: b.z, isHeld: b.isHeld }); });
             fs_1.default.writeFileSync(this.saveFilePath, JSON.stringify(d, null, 2));
         }
         catch (e) {
@@ -647,12 +1088,10 @@ class SupermarketRoom extends colyseus_1.Room {
         try {
             if (fs_1.default.existsSync(this.saveFilePath)) {
                 const d = JSON.parse(fs_1.default.readFileSync(this.saveFilePath, "utf-8"));
-                this.state.budget = d.budget;
-                this.state.storeName = d.storeName;
-                this.state.storeLevel = d.storeLevel;
-                this.state.storeExp = d.storeExp;
-                if (d.inventory)
-                    Object.keys(d.inventory).forEach(k => this.state.inventory.set(k, d.inventory[k]));
+                this.state.budget = d.budget ?? 5000;
+                this.state.storeName = d.storeName ?? "Super-Saver";
+                this.state.storeLevel = d.storeLevel ?? 1;
+                this.state.storeExp = d.storeExp ?? 0;
                 if (d.placedItems)
                     d.placedItems.forEach((id) => {
                         const i = new SupermarketState_1.PlacedItem();
@@ -664,6 +1103,18 @@ class SupermarketRoom extends colyseus_1.Room {
                         i.rotation = id.rotation;
                         i.stock = id.stock;
                         i.maxStock = id.maxStock;
+                        if (id.storedBoxIds) {
+                            id.storedBoxIds.forEach((bid) => i.storedBoxIds.push(bid));
+                            if (i.type === "storage_shelf") {
+                                while (i.storedBoxIds.length < 8) {
+                                    i.storedBoxIds.push("");
+                                }
+                            }
+                        }
+                        else if (i.type === "storage_shelf") {
+                            for (let j = 0; j < 8; j++)
+                                i.storedBoxIds.push("");
+                        }
                         this.state.placedItems.set(i.id, i);
                     });
                 if (d.employees)
@@ -672,8 +1123,9 @@ class SupermarketRoom extends colyseus_1.Room {
                         e.id = ed.id;
                         e.name = ed.name;
                         e.color = ed.color;
-                        e.salary = ed.salary;
+                        e.salary = 15;
                         e.task = ed.task;
+                        e.holdingBoxId = ed.holdingBoxId || "";
                         e.x = 0;
                         e.z = 9.5;
                         e.targetX = 0;
@@ -689,6 +1141,7 @@ class SupermarketRoom extends colyseus_1.Room {
                         b.amount = bd.amount;
                         b.x = bd.x;
                         b.z = bd.z;
+                        b.isHeld = bd.isHeld || false;
                         this.state.deliveryBoxes.set(b.id, b);
                     });
             }

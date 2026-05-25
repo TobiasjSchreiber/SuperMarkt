@@ -20,11 +20,19 @@ interface NPCMeshProps {
 
 export const NPCMesh: React.FC<NPCMeshProps> = ({ npc }) => {
   const meshRef = useRef<THREE.Group>(null);
-  const basketRef = useRef<THREE.Mesh>(null);
+  const basketRef = useRef<THREE.Group>(null);
   const isInitialized = useRef<boolean>(false);
 
   // Target position vector on floor
   const targetPos = new THREE.Vector3(npc.x, 0, npc.z);
+
+  // Deterministic styling based on NPC name/id
+  const seed = npc.name ? npc.name.length : 0;
+  const hash = npc.id ? npc.id.split("").reduce((acc, char) => acc + char.charCodeAt(0), 0) : seed;
+  const hatType = hash % 6; // 0: No Hat, 1: Baseball Cap, 2: Top Hat, 3: Beanie with Pom-pom, 4: Sombrero/Straw Hat, 5: Chef Hat
+
+  const hatColors = ["#ef4444", "#3b82f6", "#10b981", "#ec4899", "#8b5cf6", "#f59e0b"];
+  const hatColor = hatColors[hash % hatColors.length];
 
   useFrame((state) => {
     if (!meshRef.current) return;
@@ -107,16 +115,131 @@ export const NPCMesh: React.FC<NPCMeshProps> = ({ npc }) => {
         </mesh>
       </group>
 
-      {/* Floating Shopping Basket (Bobbing in front of customer) */}
-      <mesh ref={basketRef} position={[0, 0.6, 0.35]} castShadow>
-        <boxGeometry args={[0.26, 0.16, 0.18]} />
-        <meshStandardMaterial color="#fbbf24" roughness={0.6} />
-      </mesh>
-      {/* Basket handle */}
-      <mesh position={[0, 0.72, 0.35]} rotation={[Math.PI / 2, 0, 0]}>
-        <cylinderGeometry args={[0.01, 0.01, 0.22, 8]} />
-        <meshStandardMaterial color="#78350f" />
-      </mesh>
+      {/* Hats */}
+      {hatType === 1 && ( // Baseball Cap
+        <group position={[0, 1.28, -0.02]}>
+          <mesh castShadow>
+            <sphereGeometry args={[0.21, 10, 10, 0, Math.PI * 2, 0, Math.PI / 2]} />
+            <meshStandardMaterial color={hatColor} roughness={0.5} />
+          </mesh>
+          <mesh position={[0, -0.02, 0.16]} rotation={[0.08, 0, 0]} castShadow>
+            <boxGeometry args={[0.26, 0.02, 0.16]} />
+            <meshStandardMaterial color={hatColor} roughness={0.5} />
+          </mesh>
+        </group>
+      )}
+
+      {hatType === 2 && ( // Top Hat
+        <group position={[0, 1.27, 0]}>
+          {/* Brim */}
+          <mesh castShadow receiveShadow>
+            <cylinderGeometry args={[0.3, 0.3, 0.02, 12]} />
+            <meshStandardMaterial color="#1e293b" roughness={0.6} />
+          </mesh>
+          {/* Top part */}
+          <mesh position={[0, 0.13, 0]} castShadow>
+            <cylinderGeometry args={[0.18, 0.18, 0.24, 12]} />
+            <meshStandardMaterial color="#1e293b" roughness={0.6} />
+          </mesh>
+          {/* Ribbon */}
+          <mesh position={[0, 0.03, 0]} castShadow>
+            <cylinderGeometry args={[0.185, 0.185, 0.04, 12]} />
+            <meshStandardMaterial color="#ef4444" roughness={0.4} />
+          </mesh>
+        </group>
+      )}
+
+      {hatType === 3 && ( // Beanie with Pom-pom
+        <group position={[0, 1.28, 0]}>
+          {/* Body */}
+          <mesh castShadow>
+            <sphereGeometry args={[0.21, 12, 12, 0, Math.PI * 2, 0, Math.PI / 2]} />
+            <meshStandardMaterial color={hatColor} roughness={0.8} />
+          </mesh>
+          {/* Pom-pom */}
+          <mesh position={[0, 0.21, 0]} castShadow>
+            <sphereGeometry args={[0.05, 8, 8]} />
+            <meshStandardMaterial color="#ffffff" roughness={0.9} />
+          </mesh>
+        </group>
+      )}
+
+      {hatType === 4 && ( // Sombrero / Straw Hat
+        <group position={[0, 1.27, 0]}>
+          {/* Brim */}
+          <mesh castShadow receiveShadow>
+            <cylinderGeometry args={[0.42, 0.42, 0.02, 16]} />
+            <meshStandardMaterial color="#fef08a" roughness={0.9} />
+          </mesh>
+          {/* Cone */}
+          <mesh position={[0, 0.09, 0]} castShadow>
+            <cylinderGeometry args={[0.08, 0.15, 0.16, 12]} />
+            <meshStandardMaterial color="#fef08a" roughness={0.9} />
+          </mesh>
+          {/* Colorful band */}
+          <mesh position={[0, 0.02, 0]} castShadow>
+            <cylinderGeometry args={[0.155, 0.155, 0.025, 12]} />
+            <meshStandardMaterial color="#10b981" roughness={0.5} />
+          </mesh>
+        </group>
+      )}
+
+      {hatType === 5 && ( // Chef Hat
+        <group position={[0, 1.29, 0]}>
+          {/* Base */}
+          <mesh castShadow>
+            <cylinderGeometry args={[0.18, 0.18, 0.06, 12]} />
+            <meshStandardMaterial color="#ffffff" roughness={0.7} />
+          </mesh>
+          {/* Puffy top */}
+          <mesh position={[0, 0.13, 0]} castShadow>
+            <cylinderGeometry args={[0.22, 0.2, 0.18, 12]} />
+            <meshStandardMaterial color="#ffffff" roughness={0.8} />
+          </mesh>
+        </group>
+      )}
+
+      {/* Detailed Shopping Basket with Groceries inside */}
+      <group ref={basketRef} position={[0, 0.6, 0.35]}>
+        {/* Basket Casing (semi-transparent grid look) */}
+        <mesh castShadow>
+          <boxGeometry args={[0.26, 0.16, 0.18]} />
+          <meshStandardMaterial color="#fbbf24" roughness={0.4} transparent opacity={0.85} />
+        </mesh>
+        {/* Basket Rim */}
+        <mesh position={[0, 0.08, 0]}>
+          <boxGeometry args={[0.28, 0.02, 0.2]} />
+          <meshStandardMaterial color="#f59e0b" metalness={0.5} />
+        </mesh>
+        {/* Chrome handles */}
+        <mesh position={[0, 0.08, 0.09]} rotation={[0.25, 0, 0]}>
+          <torusGeometry args={[0.12, 0.008, 4, 12, Math.PI]} />
+          <meshStandardMaterial color="#cbd5e1" metalness={0.9} roughness={0.1} />
+        </mesh>
+        <mesh position={[0, 0.08, -0.09]} rotation={[-0.25, 0, 0]}>
+          <torusGeometry args={[0.12, 0.008, 4, 12, Math.PI]} />
+          <meshStandardMaterial color="#cbd5e1" metalness={0.9} roughness={0.1} />
+        </mesh>
+        
+        {/* Groceries inside the basket! */}
+        <group position={[0, -0.02, 0]}>
+          {/* Apple (red sphere) */}
+          <mesh position={[-0.05, 0, 0.02]} castShadow>
+            <sphereGeometry args={[0.04, 6, 6]} />
+            <meshStandardMaterial color="#ef4444" roughness={0.3} />
+          </mesh>
+          {/* Banana (yellow curved-like cylinder) */}
+          <mesh position={[0.04, -0.01, -0.03]} rotation={[0.4, 0.5, 0.6]} castShadow>
+            <cylinderGeometry args={[0.015, 0.015, 0.08, 5]} />
+            <meshStandardMaterial color="#facc15" roughness={0.4} />
+          </mesh>
+          {/* Cereal box (green box) */}
+          <mesh position={[-0.02, 0.01, -0.02]} rotation={[0, -0.2, 0]} castShadow>
+            <boxGeometry args={[0.06, 0.1, 0.04]} />
+            <meshStandardMaterial color="#4ade80" roughness={0.6} />
+          </mesh>
+        </group>
+      </group>
 
       {/* Thought bubble HTML overlay */}
       <Html

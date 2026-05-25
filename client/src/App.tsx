@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { networkManager } from "./game/NetworkManager";
+import { soundManager } from "./game/SoundManager";
 import { GameContainer } from "./game/GameContainer";
 import { Store } from "lucide-react";
 
@@ -14,13 +15,20 @@ export default function App() {
 
   // Auto-Join Effect: If we have a saved user, try to join immediately
   useEffect(() => {
+    let mounted = true;
     const savedUser = localStorage.getItem("supermarket_user");
+    
     if (savedUser && !inGame) {
       console.log("Auto-joining as:", savedUser);
-      performJoin(savedUser, selectedColor);
+      // Small delay to ensure clean state
+      setTimeout(() => {
+        if (mounted) performJoin(savedUser, selectedColor);
+      }, 100);
     } else {
       setLoading(false); // No saved user, show lobby
     }
+    
+    return () => { mounted = false; };
   }, []);
 
   const avatarColors = [
@@ -41,6 +49,9 @@ export default function App() {
   const performJoin = async (name: string, color: string) => {
     setLoading(true);
     
+    // Attempt to start music upon interaction
+    soundManager.setMusicEnabled(true);
+
     // Save to localStorage for next time
     localStorage.setItem("supermarket_user", name);
     localStorage.setItem("supermarket_color", color);

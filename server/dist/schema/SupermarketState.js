@@ -26,6 +26,8 @@ class Player extends schema_1.Schema {
         this.rotY = 0;
         this.color = "#3b82f6";
         this.isFirstPerson = false;
+        this.holdingBoxId = ""; // ID of the box the player is carrying
+        this.holdingAK47 = false; // Whether the player is holding an AK-47
         this.ping = 0;
     }
 }
@@ -79,6 +81,14 @@ __decorate([
     __metadata("design:type", Boolean)
 ], Player.prototype, "isFirstPerson", void 0);
 __decorate([
+    (0, schema_1.type)("string"),
+    __metadata("design:type", String)
+], Player.prototype, "holdingBoxId", void 0);
+__decorate([
+    (0, schema_1.type)("boolean"),
+    __metadata("design:type", Boolean)
+], Player.prototype, "holdingAK47", void 0);
+__decorate([
     (0, schema_1.type)("number"),
     __metadata("design:type", Number)
 ], Player.prototype, "ping", void 0);
@@ -93,6 +103,7 @@ class PlacedItem extends schema_1.Schema {
         this.rotation = 0; // 0, 1, 2, 3 (multiples of 90 degrees)
         this.stock = 0;
         this.maxStock = 0;
+        this.storedBoxIds = new schema_1.ArraySchema(); // IDs of delivery boxes stored on this item (for storage shelves)
     }
 }
 exports.PlacedItem = PlacedItem;
@@ -128,6 +139,10 @@ __decorate([
     (0, schema_1.type)("number"),
     __metadata("design:type", Number)
 ], PlacedItem.prototype, "maxStock", void 0);
+__decorate([
+    (0, schema_1.type)(["string"]),
+    __metadata("design:type", Object)
+], PlacedItem.prototype, "storedBoxIds", void 0);
 class Product extends schema_1.Schema {
     constructor() {
         super(...arguments);
@@ -180,10 +195,12 @@ class NPC extends schema_1.Schema {
         this.targetZ = 8;
         this.pathX = new schema_1.ArraySchema();
         this.pathZ = new schema_1.ArraySchema();
+        this.rotY = 0;
         this.state = "idle"; // 'idle', 'walking_to_shelf', 'browsing_shelf', 'walking_to_register', 'paying', 'leaving'
         this.color = "#f43f5e";
         this.activeIcon = "🛒";
         this.browseTimer = 0;
+        this.patience = 100; // Customer patience (decreases while waiting)
         this.targetShelfId = "";
         this.itemCount = 0;
         this.message = "";
@@ -223,6 +240,10 @@ __decorate([
     __metadata("design:type", Object)
 ], NPC.prototype, "pathZ", void 0);
 __decorate([
+    (0, schema_1.type)("number"),
+    __metadata("design:type", Number)
+], NPC.prototype, "rotY", void 0);
+__decorate([
     (0, schema_1.type)("string"),
     __metadata("design:type", String)
 ], NPC.prototype, "state", void 0);
@@ -238,6 +259,10 @@ __decorate([
     (0, schema_1.type)("number"),
     __metadata("design:type", Number)
 ], NPC.prototype, "browseTimer", void 0);
+__decorate([
+    (0, schema_1.type)("number"),
+    __metadata("design:type", Number)
+], NPC.prototype, "patience", void 0);
 __decorate([
     (0, schema_1.type)("string"),
     __metadata("design:type", String)
@@ -261,11 +286,13 @@ class Employee extends schema_1.Schema {
         this.targetZ = 0;
         this.pathX = new schema_1.ArraySchema();
         this.pathZ = new schema_1.ArraySchema();
+        this.rotY = 0;
         this.state = "idle"; // 'idle', 'walking', 'working'
         this.task = "none"; // 'none', 'register', 'stocking'
         this.color = "#10b981";
         this.workTimer = 0;
-        this.salary = 50; // default salary per pay period
+        this.salary = 15; // default salary per pay period
+        this.holdingBoxId = ""; // ID of the box the employee is carrying
     }
 }
 exports.Employee = Employee;
@@ -302,6 +329,10 @@ __decorate([
     __metadata("design:type", Object)
 ], Employee.prototype, "pathZ", void 0);
 __decorate([
+    (0, schema_1.type)("number"),
+    __metadata("design:type", Number)
+], Employee.prototype, "rotY", void 0);
+__decorate([
     (0, schema_1.type)("string"),
     __metadata("design:type", String)
 ], Employee.prototype, "state", void 0);
@@ -321,6 +352,10 @@ __decorate([
     (0, schema_1.type)("number"),
     __metadata("design:type", Number)
 ], Employee.prototype, "salary", void 0);
+__decorate([
+    (0, schema_1.type)("string"),
+    __metadata("design:type", String)
+], Employee.prototype, "holdingBoxId", void 0);
 class DeliveryBox extends schema_1.Schema {
     constructor() {
         super(...arguments);
@@ -329,6 +364,7 @@ class DeliveryBox extends schema_1.Schema {
         this.amount = 0;
         this.x = 0;
         this.z = 0;
+        this.isHeld = false; // Whether someone is carrying this box
     }
 }
 exports.DeliveryBox = DeliveryBox;
@@ -352,6 +388,10 @@ __decorate([
     (0, schema_1.type)("number"),
     __metadata("design:type", Number)
 ], DeliveryBox.prototype, "z", void 0);
+__decorate([
+    (0, schema_1.type)("boolean"),
+    __metadata("design:type", Boolean)
+], DeliveryBox.prototype, "isHeld", void 0);
 class SupermarketState extends schema_1.Schema {
     constructor() {
         super(...arguments);
@@ -359,7 +399,6 @@ class SupermarketState extends schema_1.Schema {
         this.placedItems = new schema_1.MapSchema();
         this.npcs = new schema_1.MapSchema();
         this.employees = new schema_1.MapSchema();
-        this.inventory = new schema_1.MapSchema(); // global inventory of items
         this.deliveryBoxes = new schema_1.MapSchema();
         this.budget = 5000; // starting money
         this.storeName = "Super-Saver";
@@ -385,10 +424,6 @@ __decorate([
     (0, schema_1.type)({ map: Employee }),
     __metadata("design:type", Object)
 ], SupermarketState.prototype, "employees", void 0);
-__decorate([
-    (0, schema_1.type)({ map: "number" }),
-    __metadata("design:type", Object)
-], SupermarketState.prototype, "inventory", void 0);
 __decorate([
     (0, schema_1.type)({ map: DeliveryBox }),
     __metadata("design:type", Object)

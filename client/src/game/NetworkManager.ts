@@ -162,6 +162,12 @@ class NetworkManager {
       this.room.send("chat", message);
     }
   }
+
+  sendShoot() {
+    if (this.room) {
+      this.room.send("shoot");
+    }
+  }
 }
 
 // Export a singleton instance
